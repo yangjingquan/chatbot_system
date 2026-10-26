@@ -14,7 +14,7 @@ def main():
         verify(client.post('/api/auth/login',json={'email':os.environ['ADMIN_EMAIL'],'password':os.environ['ADMIN_PASSWORD']}))
         config=verify(client.get('/api/admin/settings')).json()
         assert 'deepseek_api_key' not in config
-        docs=verify(client.get('/api/admin/documents')).json()
+        docs=verify(client.get('/api/admin/documents?page_size=100')).json()['items']
         assert len(docs)>=19
         for query in ('公安联考基础班多少钱','辅警一定是公务员吗','今年国考报名时间'):
             result=verify(client.post('/api/admin/retrieval-test',json={'query':query})).json()

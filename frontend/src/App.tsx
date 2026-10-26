@@ -34,13 +34,18 @@ import { Leads } from "./Leads";
 import { Configuration } from "./Configuration";
 import { AuthProvider } from "./auth";
 import { Staff } from "./Staff";
+import { Courses } from "./Courses";
+import { Students } from "./Students";
+import { Todos } from "./Todos";
 
 const navigation = [
   ["/", "工作台", LayoutDashboard, "analytics.read"],
   ["/knowledge", "企业知识库", BookOpen, "knowledge.read"],
+  ["/courses", "课程与班次", GraduationCap, "courses.read"],
   ["/conversations", "咨询会话", MessagesSquare, "conversations.read"],
   ["/leads", "咨询线索", Users, "leads.read"],
-  ["/customers", "客户档案", ContactRound, "leads.read"],
+  ["/customers", "学员档案", ContactRound, "students.read"],
+  ["/todos", "跟进待办", Users, "leads.read"],
   ["/analytics", "数据分析", ChartNoAxesCombined, "analytics.read"],
   ["/staff", "员工与权限", ShieldCheck, "staff.manage"],
   ["/robot", "机器人配置", Bot, "settings.write"],
@@ -311,6 +316,17 @@ export function App() {
             </div>
             <Routes>
               <Route
+                path="/courses"
+                element={guard("courses.read", <Courses version={version} />)}
+              />
+              <Route
+                path="/todos"
+                element={guard(
+                  "leads.read",
+                  <Todos includeDemo={includeDemo} version={version} />,
+                )}
+              />
+              <Route
                 path="/"
                 element={guard(
                   "analytics.read",
@@ -341,12 +357,8 @@ export function App() {
               <Route
                 path="/customers"
                 element={guard(
-                  "leads.read",
-                  <Leads
-                    includeDemo={includeDemo}
-                    version={version}
-                    customers
-                  />,
+                  "students.read",
+                  <Students includeDemo={includeDemo} version={version} />,
                 )}
               />
               <Route
@@ -387,7 +399,7 @@ export function App() {
           </main>
           <footer className="workspace-footer">
             <span>知行客服 · 每一次回答，都有据可循</span>
-            <span>本地开发版 v0.2</span>
+            <span>本地开发版 v0.3</span>
           </footer>
         </div>
       </div>

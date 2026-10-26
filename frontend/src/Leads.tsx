@@ -11,6 +11,9 @@ import {
   LockKeyhole,
 } from "lucide-react";
 import { api, date, useResource } from "./api";
+import { useSearchParams } from "react-router-dom";
+import { Filters, Pager, usePaged, localTime, isoTime } from "./lists";
+import { StudentAssociation } from "./Students";
 import { useAccess } from "./auth";
 import {
   Badge,
@@ -48,29 +51,19 @@ export function Leads({
     "/admin/staff/options",
     can("leads.assign") ? version : -1,
   );
-  const r = useResource<any[]>(
-      `/admin/leads?include_demo=${includeDemo}`,
-      version,
-    ),
+  const list = usePaged("/admin/leads", includeDemo, version);
+  const r = list.resource,
     toast = useToast();
-  const [search, setSearch] = useState(""),
-    [level, setLevel] = useState("all"),
-    [stage, setStage] = useState("all"),
-    [detail, setDetail] = useState<any>(null),
+  const owners = useResource<any[]>("/admin/filter-options", version);
+  const [detail, setDetail] = useState<any>(null),
     [note, setNote] = useState(""),
     [busy, setBusy] = useState(false);
+  const rows = r.data?.items || [];
+  const [params] = useSearchParams();
+  const requestedLead = params.get("lead_id");
   useEffect(() => {
-    setDetail(null);
-    setLevel("all");
-    setStage("all");
-  }, [customers]);
-  const rows = (r.data || []).filter(
-    (l) =>
-      (!customers || l.stage === "已成交") &&
-      (l.name + l.tags.join("") + l.owner + l.contact).includes(search) &&
-      (level === "all" || l.level === level) &&
-      (stage === "all" || l.stage === stage),
-  );
+    if (requestedLead) void open(requestedLead);
+  }, [requestedLead]);
   async function open(id: string) {
     try {
       const result = await api("/admin/leads/" + id);
@@ -96,6 +89,7 @@ export function Leads({
             level:
               detail.level !== originalLevel.current ? detail.level : undefined,
             contact_verified: detail.contact_verified,
+            next_followup_at: detail.next_followup_at || null,
           }),
         }),
       );
@@ -157,7 +151,7 @@ export function Leads({
           can("leads.export") && (
             <a
               className="button secondary"
-              href={`/api/admin/leads-export?include_demo=${includeDemo}`}
+              href={"/api/admin/leads-export?" + list.query}
               download
             >
               <Download size={16} />
@@ -168,53 +162,13 @@ export function Leads({
       />
       <div className="lead-summary">
         <span>
-          共 <strong>{rows.length}</strong> 条{customers ? "客户" : "线索"}
+          当前筛选共 <strong>{r.data?.total || 0}</strong> 条线索
         </span>
-        <span>
-          <span className="status-dot green" />
-          高意向 {(r.data || []).filter((l) => l.level === "高意向").length}
-        </span>
-        <span>
-          <span className="status-dot amber" />
-          待分配 {(r.data || []).filter((l) => !l.owner_id).length}
-        </span>
-        <small>联系方式仅用于已说明的咨询用途；未核验不等于真实身份。</small>
+        <small>完整筛选条件同样用于导出；联系方式未核验不等于真实身份。</small>
       </div>
       <div className={"lead-layout " + (detail ? "with-detail" : "")}>
         <section className="panel">
-          <div className="toolbar">
-            <div className="search-field">
-              <Search size={16} />
-              <input
-                aria-label="搜索线索"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索姓名、课程、负责人"
-              />
-            </div>
-            <div className="filter-group">
-              <select
-                aria-label="意向等级"
-                value={level}
-                onChange={(e) => setLevel(e.target.value)}
-              >
-                <option value="all">全部意向</option>
-                {levels.map((v) => (
-                  <option key={v}>{v}</option>
-                ))}
-              </select>
-              <select
-                aria-label="跟进阶段"
-                value={stage}
-                onChange={(e) => setStage(e.target.value)}
-              >
-                <option value="all">全部阶段</option>
-                {stages.map((v) => (
-                  <option key={v}>{v}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <Filters list={list} owners={owners.data || []} />
           {r.loading ? (
             <Loading />
           ) : r.error ? (
@@ -253,6 +207,9 @@ export function Leads({
                               {l.is_demo && <Badge tone="muted">演示</Badge>}
                             </strong>
                             <small>
+                              {!l.contact_allowed && (
+                                <Badge tone="amber">已停止联系</Badge>
+                              )}{" "}
                               {l.contact} ·{" "}
                               {l.contact_verified ? "已核验" : "待核验"}
                             </small>
@@ -328,6 +285,7 @@ export function Leads({
               }
             />
           )}
+          <Pager list={list} />
         </section>
         {detail && (
           <aside className="panel lead-detail">
@@ -420,6 +378,20 @@ export function Leads({
                 <ErrorBox text={staff.error} retry={staff.reload} />
               )}
             </label>
+            <label>
+              下次跟进（北京时间）
+              <input
+                type="datetime-local"
+                value={localTime(detail.next_followup_at)}
+                onChange={(e) =>
+                  setDetail({
+                    ...detail,
+                    next_followup_at: isoTime(e.target.value),
+                  })
+                }
+              />
+              <small>留空取消待办；停止联系的线索不会提醒外呼。</small>
+            </label>
             <label className="checkbox-line">
               <input
                 type="checkbox"
@@ -459,6 +431,14 @@ export function Leads({
             ) : (
               <p className="footnote">暂无明确采购信号，需继续了解。</p>
             )}
+            <StudentAssociation
+              key={detail.id + String(detail.student_id)}
+              lead={detail}
+              onChanged={() => {
+                void open(detail.id);
+                r.reload();
+              }}
+            />
             <h3>添加跟进</h3>
             <textarea
               aria-label="跟进记录内容"

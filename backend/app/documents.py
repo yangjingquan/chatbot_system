@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from .db import get_db
-from .models import Admin, Document, DocumentRevision, Chunk
+from .models import Admin, Document, DocumentRevision, Chunk, now
+from .querying import BusinessFilters, Paging, common, paginate
 from .permissions import require, scoped_object
 from .knowledge import parse_file, retrieve, retrieval_status
 from . import document_service as service
@@ -61,10 +62,21 @@ def responsibles(user:Admin=Depends(require('knowledge.read')),db:Session=Depend
     return [{'id':a.id,'name':a.name,'role':a.role} for a in db.scalars(select(Admin).where(Admin.tenant_id==user.tenant_id,Admin.is_active.is_(True),Admin.role.in_(['admin','knowledge'])).order_by(Admin.name))]
 
 @router.get('/documents')
-def documents(q:str='',user:Admin=Depends(require('knowledge.read')),db:Session=Depends(get_db)):
-    query=select(Document).where(Document.tenant_id==user.tenant_id)
-    docs=[serialize(db,d,False) for d in db.scalars(query.order_by(Document.updated_at.desc()).limit(500))]
-    return [d for d in docs if q[:200] in d['title']] if q else docs
+def documents(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:str='',include_demo:bool=True,user:Admin=Depends(require('knowledge.read')),db:Session=Depends(get_db)):
+    query=common(select(Document).where(Document.tenant_id==user.tenant_id),Document,filters.model_copy(update={'include_demo':include_demo}))
+    def working(field):
+        draft=select(DocumentRevision.data[field].as_string()).where(DocumentRevision.document_id==Document.id,DocumentRevision.status.in_(['draft','submitted'])).order_by(DocumentRevision.number.desc()).limit(1).scalar_subquery()
+        return func.coalesce(draft,getattr(Document,field))
+    if filters.q:query=query.where(working('title').contains(filters.q,autoescape=True))
+    if filters.exam_type:query=query.where(working('exam_type')==filters.exam_type)
+    if filters.owner_id:query=query.where(working('responsible_id')==filters.owner_id)
+    if status in ('draft','submitted'):
+        query=query.where(select(DocumentRevision.id).where(DocumentRevision.document_id==Document.id,DocumentRevision.status==status).exists())
+    elif status=='expired':query=query.where(Document.status=='published',Document.valid_until<now())
+    elif status=='scheduled':query=query.where(Document.status=='published',Document.valid_from>now())
+    elif status=='published':query=query.where(Document.status=='published',(Document.valid_from.is_(None)|(Document.valid_from<=now())),(Document.valid_until.is_(None)|(Document.valid_until>=now())))
+    elif status:query=query.where(Document.status==status)
+    return paginate(db,query.order_by(Document.created_at.desc(),Document.id.desc()),paging,lambda d:serialize(db,d,False))
 
 @router.post('/documents/upload')
 def upload(file:UploadFile=File(...),user:Admin=Depends(require('knowledge.write')),db:Session=Depends(get_db)):

@@ -75,7 +75,7 @@ def warm_embeddings():
     except Exception:
         _model_status = 'unavailable'
 
-def retrieve(db, query: str, public_only: bool = True, tenant_id: str = TENANT, limit: int = 4, context: dict | None = None) -> list[dict]:
+def _retrieve_documents(db, query: str, public_only: bool = True, tenant_id: str = TENANT, limit: int = 4, context: dict | None = None) -> list[dict]:
     from .document_service import matches_context, infer_context
     statement = select(Chunk, Document).join(Document, Chunk.document_id == Document.id).where(
         Chunk.tenant_id == tenant_id, Document.tenant_id == tenant_id, Document.status == 'published')
@@ -129,9 +129,23 @@ def retrieve(db, query: str, public_only: bool = True, tenant_id: str = TENANT, 
         chunk, doc = by_id[key]
         result.append({'chunk_id': chunk.id, 'document_id': doc.id, 'title': doc.title, 'category': doc.category,
                        'text': chunk.text, 'version': doc.version, 'is_demo': doc.is_demo,
-                       'source_url': doc.source_url, 'exam_type':doc.exam_type,'exam_year':doc.exam_year,'region':doc.region,
+                       'source_url': doc.source_url, 'knowledge_type':doc.knowledge_type,'exam_type':doc.exam_type,'exam_year':doc.exam_year,'region':doc.region,
                        'score': round(scores[key], 5)})
     return result
+
+def historical_commercial_text(source):
+    return source.get('knowledge_type')!='policy' and bool(re.search(r'\d[\d,.]*\s*(元|课时|学时)|开班',source.get('text','')))
+
+def retrieve(db,query:str,public_only:bool=True,tenant_id:str=TENANT,limit:int=4,context:dict|None=None):
+    from .catalog import catalog_sources
+    from .document_service import infer_context
+    scope=context if context is not None else infer_context(query)
+    courses=catalog_sources(db,query,scope,tenant_id)
+    docs=_retrieve_documents(db,query,public_only,tenant_id,limit,scope)
+    if public_only:docs=[s for s in docs if not historical_commercial_text(s)]
+    # Course suggestions must not crowd out matching policy or other knowledge evidence.
+    if courses and docs:return courses[:min(2,limit)]+docs[:max(0,limit-min(2,len(courses)))]
+    return (courses+docs)[:limit]
 
 def parse_file(filename: str, content: bytes) -> str:
     suffix = Path(filename).suffix.lower()

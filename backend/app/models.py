@@ -118,6 +118,9 @@ class Lead(Base):
     conversation_id: Mapped[str] = mapped_column(ForeignKey('conversations.id'), unique=True)
     name: Mapped[str] = mapped_column(String(100))
     contact: Mapped[str] = mapped_column(EncryptedContact())
+    contact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True,index=True)
+    student_id: Mapped[str | None] = mapped_column(ForeignKey('students.id'),nullable=True,index=True)
+    next_followup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True,index=True)
     contact_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     contact_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
     consent_text: Mapped[str] = mapped_column(Text)
@@ -151,3 +154,62 @@ class Audit(Base):
     action: Mapped[str] = mapped_column(String(120))
     target: Mapped[str] = mapped_column(String(240), default='')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class Course(Base):
+    __tablename__='courses'
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(String(64),default=TENANT,index=True)
+    name:Mapped[str]=mapped_column(String(160))
+    exam_type:Mapped[str]=mapped_column(String(40),index=True)
+    hours:Mapped[int]=mapped_column(Integer,default=0)
+    class_type:Mapped[str]=mapped_column(String(80),default='基础班')
+    description:Mapped[str]=mapped_column(Text,default='')
+    status:Mapped[str]=mapped_column(String(24),default='active')
+    version:Mapped[int]=mapped_column(Integer,default=1)
+    is_demo:Mapped[bool]=mapped_column(Boolean,default=False)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,onupdate=now)
+
+class CourseBatch(Base):
+    __tablename__='course_batches'
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(String(64),default=TENANT,index=True)
+    course_id:Mapped[str]=mapped_column(ForeignKey('courses.id'),index=True)
+    name:Mapped[str]=mapped_column(String(160))
+    mode:Mapped[str]=mapped_column(String(24),default='online')
+    location:Mapped[str]=mapped_column(String(240),default='')
+    schedule:Mapped[str]=mapped_column(Text,default='待人工确认')
+    starts_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+    ends_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+    price_cents:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    price_from:Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+    price_until:Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+    sale_status:Mapped[str]=mapped_column(String(24),default='draft')
+    version:Mapped[int]=mapped_column(Integer,default=1)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,onupdate=now)
+
+class Student(Base):
+    __tablename__='students'
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(String(64),default=TENANT,index=True)
+    name:Mapped[str]=mapped_column(String(100))
+    owner_id:Mapped[str|None]=mapped_column(String(36),nullable=True,index=True)
+    exam_targets:Mapped[list]=mapped_column(JSON,default=list)
+    notes:Mapped[str]=mapped_column(Text,default='')
+    status:Mapped[str]=mapped_column(String(24),default='active',index=True)
+    merged_into_id:Mapped[str|None]=mapped_column(String(36),nullable=True)
+    version:Mapped[int]=mapped_column(Integer,default=1)
+    is_demo:Mapped[bool]=mapped_column(Boolean,default=False)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,onupdate=now)
+
+class StudentInterest(Base):
+    __tablename__='student_interests'
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    student_id:Mapped[str]=mapped_column(ForeignKey('students.id'),index=True)
+    exam_type:Mapped[str]=mapped_column(String(40))
+    course_id:Mapped[str|None]=mapped_column(ForeignKey('courses.id'),nullable=True)
+    target_year:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    status:Mapped[str]=mapped_column(String(24),default='exploring')
+    notes:Mapped[str]=mapped_column(Text,default='')

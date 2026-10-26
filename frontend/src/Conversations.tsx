@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { api, date, statusLabel, useResource } from "./api";
 import { useAccess } from "./auth";
+import { useSearchParams } from "react-router-dom";
+import { Filters, Pager, usePaged } from "./lists";
 import {
   Badge,
   Empty,
@@ -83,24 +85,18 @@ export function Conversations({
   version: number;
 }) {
   const { user, can } = useAccess();
-  const list = useResource<any[]>(
-    `/admin/conversations?include_demo=${includeDemo}`,
-    version,
-  );
-  const [selected, setSelected] = useState(""),
+  const pages = usePaged("/admin/conversations", includeDemo, version),
+    list = pages.resource;
+  const owners = useResource<any[]>("/admin/filter-options", version);
+  const [params] = useSearchParams();
+  const [selected, setSelected] = useState(params.get("conversation_id") || ""),
     [detail, setDetail] = useState<any>(null),
-    [search, setSearch] = useState(""),
-    [filter, setFilter] = useState("all"),
     [reply, setReply] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const toast = useToast(),
     bottom = useRef<HTMLDivElement>(null);
-  const rows = (list.data || []).filter(
-    (v) =>
-      (v.visitor_name + v.last_message + v.source_page).includes(search) &&
-      (filter === "all" || v.status === filter),
-  );
+  const rows = list.data?.items || [];
   const canHandle =
     can("conversations.handle") &&
     (!detail?.assigned_to_id ||
@@ -173,26 +169,24 @@ export function Conversations({
         title="咨询会话"
         description="查看完整咨询与回答依据，必要时接管人工服务。"
       />
+      <section className="panel">
+        <Filters
+          list={pages}
+          owners={owners.data || []}
+          placeholder="搜索访客、问题或来源页面"
+        />
+      </section>
       <div className="conversation-workspace">
         <aside className="conversation-list">
           <div className="conversation-filters">
-            <div className="search-field">
-              <Search size={16} />
-              <input
-                aria-label="搜索咨询"
-                value={search}
-                placeholder="搜索访客、内容或来源"
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
             <select
               aria-label="接待状态"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              value={pages.filters.status || ""}
+              onChange={(e) => pages.change("status", e.target.value)}
             >
-              <option value="all">全部接待状态</option>
+              <option value="">全部接待状态</option>
               {["bot", "waiting", "human", "closed"].map((v) => (
-                <option key={v} value={v}>
+                <option value={v} key={v}>
                   {statusLabel[v]}
                 </option>
               ))}
@@ -241,6 +235,7 @@ export function Conversations({
               description="可从官网演示发起新咨询。"
             />
           )}
+          <Pager list={pages} />
         </aside>
         <section className="conversation-main">
           {error ? (

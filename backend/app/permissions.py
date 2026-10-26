@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException
 from sqlalchemy import and_, or_, select
-from .models import Admin, Conversation, Lead
+from .models import Admin, Conversation, Lead, Student
 from .security import admin_user
 
 ROLE_LABELS={'admin':'管理员','knowledge':'知识运营','support':'客服','advisor':'课程顾问'}
@@ -10,6 +10,9 @@ ROLES={
     'support':{'conversations.read','conversations.handle','leads.read','leads.write','analytics.read','settings.read'},
     'advisor':{'conversations.read','conversations.handle','leads.read','leads.write','analytics.read','settings.read'},
 }
+ROLES['admin'].update({'courses.read','courses.write','students.read','students.write','students.merge'})
+ROLES['knowledge'].add('courses.read')
+for role in ('support','advisor'):ROLES[role].update({'courses.read','students.read','students.write'})
 
 def has_permission(user,permission):
     return bool(user.is_active and permission in ROLES.get(user.role,set()))
@@ -45,6 +48,11 @@ def scoped_object(db,model,key,user):
     query=select(model).where(model.id==key,model.tenant_id==user.tenant_id)
     if model is Lead:query=scope_leads(query,user)
     if model is Conversation:query=scope_conversations(query,user)
+    if model is Student:query=scope_students(query,user)
     item=db.scalar(query)
     if not item:raise HTTPException(404,'记录不存在或不在授权范围内')
     return item
+
+def scope_students(query,user):
+    query=query.where(Student.tenant_id==user.tenant_id)
+    return query.where(Student.owner_id==user.id) if user.role=='advisor' else query

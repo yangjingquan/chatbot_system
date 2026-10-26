@@ -34,7 +34,7 @@ with TestClient(app, headers={'Origin': os.environ.get('PUBLIC_ORIGIN', 'http://
     verify(client.post('/api/auth/login', json={'email': os.environ['ADMIN_EMAIL'], 'password': os.environ['ADMIN_PASSWORD']}))
     me = verify(client.get('/api/auth/me'))
     assert me['role'] == 'admin'
-    for document in verify(client.get('/api/admin/documents')):
+    for document in verify(client.get('/api/admin/documents?page_size=100'))['items']:
         assert verify(client.get('/api/admin/documents/' + document['id'] + '/revisions'))
     doc = verify(client.post('/api/admin/documents', json={'title': 'PG 迁移演练', 'content': '迁移演练旧内容 PG-7852', 'status': 'published'}))
     path = '/api/admin/documents/' + doc['id']

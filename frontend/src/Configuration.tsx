@@ -1,3 +1,4 @@
+import { Pager, usePaged } from "./lists";
 import { useEffect, useState } from "react";
 import {
   Save,
@@ -22,8 +23,8 @@ export function Configuration({
   version: number;
   onChange: () => void;
 }) {
+  const auditList=usePaged("/admin/audit",true,version),audit=auditList.resource;
   const r = useResource<any>("/admin/settings", version),
-    audit = useResource<any[]>("/admin/audit", version),
     toast = useToast();
   const [form, setForm] = useState<any>(null),
     [questions, setQuestions] = useState(""),
@@ -275,9 +276,10 @@ export function Configuration({
           </>
         ) : (
           <section className="panel audit-panel">
+            <Pager list={auditList} />
             <div className="panel-heading">
               <h2>最近操作记录</h2>
-              <Badge>{audit.data?.length || 0} 条</Badge>
+              <Badge>{audit.data?.total || 0} 条</Badge>
             </div>
             {audit.error ? (
               <ErrorBox text={audit.error} />
@@ -293,7 +295,7 @@ export function Configuration({
                     </tr>
                   </thead>
                   <tbody>
-                    {audit.data?.slice(0, 15).map((a) => (
+                    {audit.data?.items.map((a) => (
                       <tr key={a.id}>
                         <td>{a.actor}</td>
                         <td>{a.action}</td>

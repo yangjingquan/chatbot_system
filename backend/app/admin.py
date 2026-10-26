@@ -1,7 +1,7 @@
 import csv
 import io
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -14,6 +14,7 @@ from .models import Admin, AdminSession, Audit, Company, Conversation, Document,
 from .security import admin_user, check_origin, digest, passwords, limit
 from .knowledge import ingest_document, retrieve, parse_file, retrieval_status
 from .permissions import require, check_permission, user_data, scoped_object, scope_leads, scope_conversations, has_permission
+from .querying import BusinessFilters, Paging, lead_query, conversation_query, paginate, boundaries
 
 router = APIRouter()
 
@@ -28,8 +29,8 @@ def message_data(m):
             'state':m.state, 'created_at':m.created_at.isoformat()}
 
 def lead_data(l):
-    return {k: (getattr(l,k).isoformat() if k.endswith('_at') else getattr(l,k)) for k in
-            ('id','conversation_id','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','owner_id','manual_level','is_demo','created_at','updated_at')}
+    return {k: (getattr(l,k).isoformat() if k.endswith('_at') and getattr(l,k) else getattr(l,k)) for k in
+            ('id','conversation_id','student_id','next_followup_at','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','owner_id','manual_level','is_demo','created_at','updated_at')}
 
 def conversation_data(db, c, full=False, user=None):
     messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
@@ -105,11 +106,9 @@ def update_settings(data: ConfigPatch, user: Admin = Depends(require('settings.w
     return get_settings(user,db)
 
 @router.get('/admin/conversations')
-def conversations(q: str = '', include_demo: bool = False, user: Admin = Depends(require('conversations.read')), db: Session = Depends(get_db)):
-    query = scope_conversations(select(Conversation),user)
-    if not include_demo: query = query.where(Conversation.is_demo.is_(False))
-    if q: query = query.where(Conversation.visitor_name.contains(q[:100]))
-    return [conversation_data(db,c) for c in db.scalars(query.order_by(Conversation.updated_at.desc()).limit(300))]
+def conversations(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:str='',user:Admin=Depends(require('conversations.read')),db:Session=Depends(get_db)):
+    query=conversation_query(db,user,filters,status).order_by(Conversation.created_at.desc(),Conversation.id.desc())
+    return paginate(db,query,paging,lambda c:conversation_data(db,c))
 
 @router.get('/admin/conversations/{sid}')
 def conversation(sid: str, user: Admin = Depends(require('conversations.read')), db: Session = Depends(get_db)):
@@ -166,15 +165,12 @@ def change_status(sid: str, data: StatusInput, user: Admin = Depends(require('co
     return {'status':conv.status}
 
 @router.get('/admin/leads')
-def leads(q: str = '', include_demo: bool = False, user: Admin = Depends(require('leads.read')), db: Session = Depends(get_db)):
-    query = scope_leads(select(Lead),user)
-    if not include_demo: query = query.where(Lead.is_demo.is_(False))
-    if q: query = query.where(Lead.name.contains(q[:100]))
-    return [lead_data(l) for l in db.scalars(query.order_by(Lead.created_at.desc()).limit(500))]
+def leads(filters:BusinessFilters=Depends(),paging:Paging=Depends(),user:Admin=Depends(require('leads.read')),db:Session=Depends(get_db)):
+    return paginate(db,lead_query(db,user,filters).order_by(Lead.created_at.desc(),Lead.id.desc()),paging,lead_data)
 
 @router.get('/admin/leads-export')
-def export_leads(include_demo: bool = False, user: Admin = Depends(require('leads.export')), db: Session = Depends(get_db)):
-    entries = leads('',include_demo,user,db)
+def export_leads(filters:BusinessFilters=Depends(),user:Admin=Depends(require('leads.export')),db:Session=Depends(get_db)):
+    entries=[lead_data(l) for l in db.scalars(lead_query(db,user,filters).order_by(Lead.created_at.desc(),Lead.id.desc()))]
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(['姓名','联系方式','核验状态','联系许可','意向等级','跟进阶段','负责人','演示数据'])
@@ -199,6 +195,7 @@ class LeadPatch(BaseModel):
     level: Literal['待判定','一般咨询','低意向','中意向','高意向','不适用'] | None = None
     contact_verified: bool | None = None
     automatic_level: bool = False
+    next_followup_at:datetime|None=None
 
 @router.patch('/admin/leads/{lead_id}')
 def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(require('leads.write')), db: Session = Depends(get_db)):
@@ -211,11 +208,9 @@ def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(require('lea
         if data.owner_id and (not employee or employee.tenant_id!=user.tenant_id or not employee.is_active or employee.role not in ('admin','advisor','support')):
             raise HTTPException(422,'请选择启用且可以跟进线索的员工')
         conv=db.get(Conversation,lead.conversation_id)
-        if conv.assigned_to_id and conv.assigned_to_id!=data.owner_id:
-            conv.assigned_to_id=None
-            if conv.status=='human':conv.status='waiting'
-        lead.owner_id=employee.id if employee else None
-        lead.owner=employee.name if employee else '未分配'
+        from .students import assign_lead, assign_student, lock_student
+        if lead.student_id:assign_student(db,lock_student(db,lead.student_id,user),employee)
+        else:assign_lead(db,lead,employee)
     changed_level=data.level is not None and data.level!=lead.level
     for k,v in data.model_dump(exclude_none=True,exclude={'automatic_level','owner','owner_id'}).items(): setattr(lead,k,v)
     if changed_level: lead.manual_level = True
@@ -223,6 +218,10 @@ def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(require('lea
         from .chat import update_analysis
         lead.manual_level=False
         update_analysis(db,db.get(Conversation,lead.conversation_id))
+    if 'next_followup_at' in data.model_fields_set:lead.next_followup_at=data.next_followup_at
+    if lead.stage=='已成交' and not lead.student_id:
+        from .students import from_lead
+        from_lead(db,lead)
     record(db,user,'更新线索',lead.id)
     db.commit()
     return lead_detail(lead_id,user,db)
@@ -236,32 +235,37 @@ def followup(lead_id: str, data: TextInput, user: Admin = Depends(require('leads
     return lead_detail(lead_id,user,db)
 
 @router.get('/admin/overview')
-def overview(include_demo: bool = False, user: Admin = Depends(require('analytics.read')), db: Session = Depends(get_db)):
+def overview(filters:BusinessFilters=Depends(),user:Admin=Depends(require('analytics.read')),db:Session=Depends(get_db)):
     from zoneinfo import ZoneInfo
     from datetime import timezone
     def business_date(value):
         aware=value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
         return aware.astimezone(ZoneInfo('Asia/Shanghai')).date()
-    cs = db.scalars(scope_conversations(select(Conversation),user)).all()
-    ls = db.scalars(scope_leads(select(Lead),user)).all()
-    if not include_demo:
-        cs,ls = [c for c in cs if not c.is_demo],[l for l in ls if not l.is_demo]
+    cs = db.scalars(conversation_query(db,user,filters)).all()
+    ls = db.scalars(lead_query(db,user,filters)).all()
     docs = db.scalars(select(Document).where(Document.tenant_id == user.tenant_id)).all()
     ids = [c.id for c in cs]
     messages = db.scalars(select(Message).where(Message.conversation_id.in_(ids))).all() if ids else []
     engaged={m.conversation_id for m in messages if m.role=='user'}|{l.conversation_id for l in ls}
     cs=[c for c in cs if c.id in engaged]
+    contacted=set(db.scalars(select(Lead.conversation_id).where(Lead.conversation_id.in_([c.id for c in cs]),Lead.tenant_id==user.tenant_id))) if cs else set()
     trend=[]
     for i in range(6,-1,-1):
         day = business_date(now() - timedelta(days=i))
         trend.append({'date':day.isoformat(),'conversations':sum(business_date(c.created_at)==day for c in cs),'leads':sum(business_date(l.created_at)==day for l in ls)})
     gaps = [{'question':m.content[:160],'created_at':m.created_at.isoformat()} for m in messages if m.role=='user' and any(a.reply_to==m.id and a.mode=='unknown' for a in messages)]
-    return {'include_demo':include_demo,
-            'counts':{'conversations':len(cs),'leads':len(ls),'high_intent':sum(l.level=='高意向' for l in ls),
-                      'documents':len(docs),'published':sum(d.status=='published' and d.visibility=='public' for d in docs),
+    from .document_service import document_active
+    from .students import todo_query,student_query
+    from .querying import count
+    tasks=todo_query(db,user,filters)
+    return {'include_demo':filters.include_demo,'filters':filters.model_dump(mode='json'),
+            'counts':{'conversations':len(cs),'leads':len(ls),'contacted_conversations':len(contacted),'high_intent':sum(l.level=='高意向' for l in ls),
+                      'documents':len(docs),'published':sum(document_active(d) and d.visibility=='public' for d in docs),
                       'pending':sum(l.stage in ('新线索','待分配') for l in ls),'handoffs':sum(c.status=='waiting' for c in cs),
                       'customers':sum(l.stage=='已成交' for l in ls),
                       'qualified':sum(l.stage in ('已合格','商机推进','已成交') for l in ls)},
+            'student_count':count(db,student_query(db,user,filters)),
+            'todo_count':count(db,tasks),'todos':[lead_data(l) for l in db.scalars(tasks.limit(5))],
             'trend':trend,'intent':[{'name':k,'value':v} for k,v in Counter(l.level for l in ls).items()],
             'exams':[{'name':k,'value':v} for k,v in Counter(t for l in ls for t in l.tags if t in ('公安联考','国考','省考','选调生','事业单位','社会招警','辅警','社区工作者')).items()],
             'recent_conversations':[conversation_data(db,c) for c in sorted(cs,key=lambda c:c.updated_at,reverse=True)[:5]],
@@ -270,5 +274,16 @@ def overview(include_demo: bool = False, user: Admin = Depends(require('analytic
             'retrieval':retrieval_status(), 'model_configured':bool(settings().deepseek_api_key)}
 
 @router.get('/admin/audit')
-def audit(user: Admin = Depends(require('audit.read')), db: Session = Depends(get_db)):
-    return [{'id':a.id,'actor':a.actor,'action':a.action,'target':a.target,'created_at':a.created_at.isoformat()} for a in db.scalars(select(Audit).where(Audit.tenant_id==user.tenant_id).order_by(Audit.created_at.desc()).limit(100))]
+def audit(filters:BusinessFilters=Depends(),paging:Paging=Depends(),user:Admin=Depends(require('audit.read')),db:Session=Depends(get_db)):
+    query=select(Audit).where(Audit.tenant_id==user.tenant_id)
+    start,end=boundaries(filters)
+    if start:query=query.where(Audit.created_at>=start)
+    if end:query=query.where(Audit.created_at<end)
+    if filters.q:query=query.where(Audit.action.contains(filters.q,autoescape=True))
+    return paginate(db,query.order_by(Audit.created_at.desc(),Audit.id.desc()),paging,lambda a:{'id':a.id,'actor':a.actor,'action':a.action,'target':a.target,'created_at':a.created_at.isoformat()})
+
+@router.get('/admin/filter-options')
+def filter_options(user:Admin=Depends(require('leads.read')),db:Session=Depends(get_db)):
+    query=select(Admin).where(Admin.tenant_id==user.tenant_id,Admin.role.in_(['admin','advisor','support']))
+    if user.role=='advisor':query=query.where(Admin.id==user.id)
+    return [{'id':a.id,'name':a.name,'is_active':a.is_active} for a in db.scalars(query.order_by(Admin.name,Admin.id))]

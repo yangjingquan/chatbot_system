@@ -13,7 +13,7 @@ from .config import settings
 from .db import get_db
 from .models import Company, Conversation, Document, Lead, Message, TENANT, now
 from .security import digest, limit, visitor
-from .knowledge import retrieve, retrieval_status
+from .knowledge import retrieve, retrieval_status, historical_commercial_text
 from .scoring import analyze_messages, WITHDRAW_CONTACT, RULE_VERSION
 from .llm import deepseek_stream
 from .admin import message_data
@@ -28,9 +28,15 @@ def public_message_data(db, message, context=None):
     result=message_data(message)
     if message.role=='assistant' and message.sources:
         for source in message.sources:
+            if source.get('kind')=='catalog':
+                from .catalog import source_valid
+                if source_valid(db,source,context):continue
+                result.update(content='原回答的课程、班次或价格已变化，请重新提问获取当前有效信息。',sources=[],mode='withdrawn',state='withdrawn')
+                break
             doc=db.get(Document,source.get('document_id'))
             if (not doc or doc.tenant_id!=TENANT or not document_active(doc) or
                 doc.visibility!='public' or doc.version!=source.get('version') or
+                historical_commercial_text({**source,'knowledge_type':doc.knowledge_type}) or
                 (context is not None and not matches_context(doc,context))):
                 result.update(content='原回答引用的资料已更新、过期或撤回，请重新提问获取当前有效信息。',
                               sources=[],mode='withdrawn',state='withdrawn')
@@ -229,6 +235,8 @@ def contact(session_id: str, data: ContactInput, request: Request, db: Session =
         lead.contact_verified=False
         lead.contact_allowed=True
         lead.consent_at=now()
+    from .students import contact_hash
+    lead.contact_hash=contact_hash(value)
     conv.visitor_name=lead.name
     db.flush()
     update_analysis(db,conv)

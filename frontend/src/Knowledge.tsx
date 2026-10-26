@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { api, date, statusLabel, useResource } from "./api";
 import { useAccess } from "./auth";
+import { Filters, Pager, usePaged } from "./lists";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
 
 const exams = [
@@ -58,14 +59,13 @@ export function Knowledge({
   version: number;
   onChange: () => void;
 }) {
-  const r = useResource<any[]>("/admin/documents", version),
-    people = useResource<any[]>("/admin/knowledge-responsibles", version);
+  const list = usePaged("/admin/documents", true, version),
+    r = list.resource;
+  const people = useResource<any[]>("/admin/knowledge-responsibles", version);
   const { can, user } = useAccess(),
     toast = useToast(),
     upload = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState(""),
-    [filter, setFilter] = useState("all"),
-    [edit, setEdit] = useState<any>(null);
+  const [edit, setEdit] = useState<any>(null);
   const [busy, setBusy] = useState(false),
     [dirty, setDirty] = useState(false),
     [error, setError] = useState(""),
@@ -75,16 +75,7 @@ export function Knowledge({
   const [testQuery, setTestQuery] = useState("公安联考基础班多少钱？"),
     [results, setResults] = useState<any>(null),
     [testBusy, setTestBusy] = useState(false);
-  const docs = (r.data || []).filter(
-    (d) =>
-      (d.title + d.category).includes(query) &&
-      (filter === "all" ||
-        (filter === "submitted"
-          ? d.draft_status === "submitted"
-          : filter === "draft"
-            ? d.draft_status === "draft"
-            : d.effective_status === filter)),
-  );
+  const docs = r.data?.items || [];
   const locked = edit?.draft_status === "submitted";
   function replace(result: any) {
     setEdit(result);
@@ -285,29 +276,25 @@ export function Knowledge({
       <div className="knowledge-summary">
         <BookOpen size={20} />
         <span>
-          <strong>{r.data?.length || 0}</strong> 份资料
+          筛选共 <strong>{r.data?.total || 0}</strong> 份资料
         </span>
-        <span className="divider" />
-        <span>
-          <span className="status-dot green" />{" "}
-          {r.data?.filter(
-            (d) =>
-              d.effective_status === "published" &&
-              d.published_visibility === "public",
-          ).length || 0}{" "}
-          份当前有效
-        </span>
-        <small>Markdown、TXT、文本 PDF、DOCX · 单文件 5 MB</small>
+        <small>草稿与正式资料独立 · 支持 Markdown、TXT、文本 PDF、DOCX</small>
       </div>
       <div className={"knowledge-layout " + (edit ? "with-editor" : "")}>
         <section className="panel document-panel">
+          <Filters
+            list={list}
+            owners={people.data || []}
+            business={false}
+            placeholder="搜索知识名称"
+          />
           <div className="toolbar">
             <select
               aria-label="知识状态筛选"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              value={list.filters.status || ""}
+              onChange={(e) => list.change("status", e.target.value)}
             >
-              <option value="all">全部状态</option>
+              <option value="">全部状态</option>
               {[
                 "published",
                 "draft",
@@ -321,15 +308,6 @@ export function Knowledge({
                 </option>
               ))}
             </select>
-            <div className="search-field">
-              <Search size={16} />
-              <input
-                aria-label="搜索知识"
-                placeholder="搜索名称或分类"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
           </div>
           {r.loading ? (
             <Loading />
@@ -417,6 +395,7 @@ export function Knowledge({
               description="试试其他关键词，或创建新的企业资料。"
             />
           )}
+          <Pager list={list} />
         </section>
         {edit && (
           <section className="panel editor-panel">

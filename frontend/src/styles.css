@@ -538,6 +538,9 @@ hr {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .sidebar nav a {
   display: flex;
@@ -567,7 +570,7 @@ hr {
 }
 .sidebar-bottom {
   margin-top: auto;
-  padding-top: 35px;
+  padding-top: 16px;
 }
 .service-status {
   display: flex;
@@ -1119,6 +1122,88 @@ tbody tr:hover {
   padding: 0;
   margin: 0;
   min-width: 0;
+}
+.business-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border);
+}
+.business-filters label {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+.business-filters input,
+.business-filters select {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.filter-search {
+  grid-column: span 2;
+}
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.pagination > span {
+  margin-right: auto;
+}
+.pagination label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.pagination select {
+  width: 64px;
+  min-height: 30px;
+  padding: 5px;
+}
+.conversation-list .pagination {
+  padding: 12px;
+  gap: 8px;
+}
+.conversation-list .pagination label {
+  display: none;
+}
+.conversation-list .pagination > span {
+  width: 100%;
+}
+.section-space {
+  margin-top: 22px;
+}
+.merge-panel {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.merge-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #526982;
+}
+@media (max-width: 600px) {
+  .business-filters {
+    grid-template-columns: 1fr 1fr;
+    padding: 14px;
+  }
+  .filter-search {
+    grid-column: 1 / -1;
+  }
+  .pagination {
+    padding: 12px;
+  }
+  .pagination > span {
+    width: 100%;
+  }
 }
 .draft-warning,
 .review-notice {

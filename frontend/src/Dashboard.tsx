@@ -23,6 +23,7 @@ import {
   Bar,
 } from "recharts";
 import { date, useResource } from "./api";
+import { Filters, queryString, useFilterState } from "./lists";
 import { Badge, Empty, ErrorBox, Level, Loading, PageTitle } from "./ui";
 
 function Trend({ data }: { data: any[] }) {
@@ -120,8 +121,10 @@ export function Dashboard({
   includeDemo: boolean;
   version: number;
 }) {
+  const filterState = useFilterState(),
+    owners = useResource<any[]>("/admin/filter-options", version);
   const resource = useResource<any>(
-    `/admin/overview?include_demo=${includeDemo}`,
+    `/admin/overview?${queryString({ ...filterState.filters, include_demo: includeDemo })}`,
     version,
   );
   if (resource.loading) return <Loading />;
@@ -147,6 +150,9 @@ export function Dashboard({
           </Link>
         }
       />
+      <section className="panel">
+        <Filters list={filterState} owners={owners.data || []} />
+      </section>
       <div className="metric-strip">
         {metrics.map(([title, value, Icon, note]) => (
           <div className="metric" key={title}>
@@ -181,6 +187,10 @@ export function Dashboard({
         <Link to={c.handoffs ? "/conversations" : "/leads"}>
           前往处理 <ArrowRight size={17} />
         </Link>
+      </section>
+      <section className="panel section-space">
+        <div className="panel-heading"><div><h2>跟进待办</h2><p>当前筛选中 {d.todo_count || 0} 条待办，停止联系和已结案线索不提醒外呼。</p></div><Link className="text-link" to="/todos">查看全部</Link></div>
+        {d.todos?.length ? <div className="table-wrap"><table><tbody>{d.todos.map((l:any)=><tr key={l.id}><td><Link to={"/leads?lead_id="+l.id}>{l.name}</Link></td><td>{date(l.next_followup_at,true)}</td><td>{l.owner}</td></tr>)}</tbody></table></div> : <div className="role-guide">当前没有需要跟进的待办。</div>}
       </section>
       <div className="dashboard-grid">
         <section className="panel trend-panel">
@@ -320,8 +330,10 @@ export function Analytics({
   includeDemo: boolean;
   version: number;
 }) {
+  const filterState = useFilterState(),
+    owners = useResource<any[]>("/admin/filter-options", version);
   const r = useResource<any>(
-    `/admin/overview?include_demo=${includeDemo}`,
+    `/admin/overview?${queryString({ ...filterState.filters, include_demo: includeDemo })}`,
     version,
   );
   if (r.loading) return <Loading />;
@@ -334,12 +346,15 @@ export function Analytics({
         title="数据分析"
         description="咨询、线索与知识质量，使用同一份明细口径。"
       />
+      <section className="panel">
+        <Filters list={filterState} owners={owners.data || []} />
+      </section>
       <div className="metric-strip">
         <div className="metric">
           <span>会话留资率</span>
           <strong>
             {c.conversations
-              ? ((c.leads / c.conversations) * 100).toFixed(1)
+              ? ((c.contacted_conversations / c.conversations) * 100).toFixed(1)
               : "0"}
             <small>%</small>
           </strong>
@@ -347,7 +362,10 @@ export function Analytics({
         </div>
         <div className="metric">
           <span>人工确认合格</span>
-          <strong>{c.qualified}<small>条</small></strong>
+          <strong>
+            {c.qualified}
+            <small>条</small>
+          </strong>
           <p>阶段为已合格、商机推进或已成交</p>
         </div>
         <div className="metric">

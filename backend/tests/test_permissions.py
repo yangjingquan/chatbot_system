@@ -32,8 +32,8 @@ def test_advisor_scope_covers_detail_followup_conversation_and_metrics(admin):
     second,c2=employee(admin,'advisor')
     lid,sid=new_lead(admin)
     assert admin.patch('/api/admin/leads/'+lid,json={'owner_id':first['id']}).status_code==200
-    assert any(l['id']==lid for l in c1.get('/api/admin/leads').json())
-    assert all(l['id']!=lid for l in c2.get('/api/admin/leads').json())
+    assert any(l['id']==lid for l in c1.get('/api/admin/leads').json()['items'])
+    assert all(l['id']!=lid for l in c2.get('/api/admin/leads').json()['items'])
     assert c1.get('/api/admin/leads/'+lid).status_code==200
     assert c2.get('/api/admin/leads/'+lid).status_code==404
     assert c2.get('/api/admin/conversations/'+sid).status_code==404
@@ -102,7 +102,7 @@ def test_claimed_conversation_cannot_expose_another_advisors_lead(admin):
     assert client.post('/api/auth/login',json={'email':operator['email'],'password':PASSWORD}).status_code==200
     assert client.get('/api/admin/leads/'+lid).status_code==404
     assert client.get('/api/admin/conversations/'+sid).status_code==404
-    assert all(c['id']!=sid for c in client.get('/api/admin/conversations').json())
+    assert all(c['id']!=sid for c in client.get('/api/admin/conversations').json()['items'])
     assert client.get('/api/admin/overview').json()['counts']['conversations']==0
     assert advisor.get('/api/admin/conversations/'+sid).json()['lead']['id']==lid
 
