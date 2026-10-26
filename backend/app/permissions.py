@@ -1,5 +1,5 @@
 from fastapi import Depends, HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from .models import Admin, Conversation, Lead
 from .security import admin_user
 
@@ -36,7 +36,9 @@ def scope_conversations(query,user):
     query=query.where(Conversation.tenant_id==user.tenant_id)
     if user.role=='advisor':
         owned=select(Lead.conversation_id).where(Lead.tenant_id==user.tenant_id,Lead.owner_id==user.id)
-        query=query.where(or_(Conversation.id.in_(owned),Conversation.assigned_to_id==user.id))
+        has_lead=select(Lead.id).where(Lead.conversation_id==Conversation.id,Lead.tenant_id==user.tenant_id).exists()
+        # A past claim never overrides the current lead owner. Claims only cover conversations without a lead.
+        query=query.where(or_(Conversation.id.in_(owned),and_(Conversation.assigned_to_id==user.id,~has_lead)))
     return query
 
 def scoped_object(db,model,key,user):

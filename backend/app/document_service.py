@@ -41,16 +41,31 @@ def effective_status(doc):
     return 'published'
 
 def infer_context(query,history=None):
-    context={}
+    contexts,pending_fields={},{}
+    focus=[]
     for text in [*(history or []),query]:
+        fields={}
         years=set(re.findall(r'(?<!\d)(20\d{2})(?!\d)',text))
-        if years:context['exam_year']=int(next(iter(years))) if len(years)==1 else None
-        elif re.search(r'今年|明年|本年度',text):context['exam_year']=None
+        if years:fields['exam_year']=int(next(iter(years))) if len(years)==1 else None
+        elif re.search(r'今年|明年|本年度',text):fields['exam_year']=None
         regions=[r for r in REGIONS if r in text]
-        if regions:context['region']=regions[0] if len(regions)==1 else None
+        if re.search(r'全国|不限地区|各省',text):regions.append('全国')
+        if regions:fields['region']=regions[0] if len(regions)==1 else None
         exams=exam_names(text)
-        if exams:context['exam_type']=exams[0] if len(exams)==1 else None
-    return context
+        switched=re.split(r'改考|转考|换成|改成|改为|转为',text)
+        if len(switched)>1 and exam_names(switched[-1]):exams=exam_names(switched[-1])
+        if exams:
+            for exam in exams:
+                # Fields from another exam must never be combined into a new policy scope.
+                if exam not in contexts:contexts[exam]=pending_fields.copy() if not focus else {}
+            focus=exams
+            pending_fields={}
+        if focus:
+            for exam in focus:contexts[exam].update(fields)
+        else:pending_fields.update(fields)
+    if len(focus)==1:return {'exam_type':focus[0],**contexts[focus[0]]}
+    if focus:return {'exam_type':None,'exam_year':None,'region':None}
+    return pending_fields
 
 def matches_context(doc,context):
     if not document_active(doc):return False

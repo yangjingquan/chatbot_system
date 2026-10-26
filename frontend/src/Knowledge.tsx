@@ -604,6 +604,7 @@ export function Knowledge({
               </div>
               <p className="footnote">
                 留空表示不限制。到期资料自动停止引用；年度和地区未明确时，机器人不会套用特定政策。
+                发布未来生效的版本会替换旧正式版本，生效前该资料暂停引用。
               </p>
               <label>
                 资料正文

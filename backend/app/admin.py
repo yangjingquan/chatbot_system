@@ -31,14 +31,14 @@ def lead_data(l):
     return {k: (getattr(l,k).isoformat() if k.endswith('_at') else getattr(l,k)) for k in
             ('id','conversation_id','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','owner_id','manual_level','is_demo','created_at','updated_at')}
 
-def conversation_data(db, c, full=False):
+def conversation_data(db, c, full=False, user=None):
     messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
     result = {'id':c.id, 'visitor_name':c.visitor_name, 'source_page':c.source_page, 'status':c.status,
               'analysis':c.analysis, 'assigned_to_id':c.assigned_to_id, 'is_demo':c.is_demo, 'created_at':c.created_at.isoformat(), 'updated_at':c.updated_at.isoformat(),
               'last_message':messages[-1].content[:120] if messages else '', 'message_count':len(messages)}
     if full:
         result['messages'] = [message_data(m) for m in messages]
-        lead = db.scalar(select(Lead).where(Lead.conversation_id == c.id))
+        lead = db.scalar(scope_leads(select(Lead).where(Lead.conversation_id == c.id),user)) if user else None
         result['lead'] = lead_data(lead) if lead else None
     return result
 
@@ -113,7 +113,7 @@ def conversations(q: str = '', include_demo: bool = False, user: Admin = Depends
 
 @router.get('/admin/conversations/{sid}')
 def conversation(sid: str, user: Admin = Depends(require('conversations.read')), db: Session = Depends(get_db)):
-    return conversation_data(db,owned(db,Conversation,sid,user),True)
+    return conversation_data(db,owned(db,Conversation,sid,user),True,user)
 
 @router.post('/admin/conversations/{sid}/mark-demo')
 def mark_demo(sid: str, user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
@@ -211,7 +211,7 @@ def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(require('lea
         if data.owner_id and (not employee or employee.tenant_id!=user.tenant_id or not employee.is_active or employee.role not in ('admin','advisor','support')):
             raise HTTPException(422,'请选择启用且可以跟进线索的员工')
         conv=db.get(Conversation,lead.conversation_id)
-        if conv.assigned_to_id==lead.owner_id:
+        if conv.assigned_to_id and conv.assigned_to_id!=data.owner_id:
             conv.assigned_to_id=None
             if conv.status=='human':conv.status='waiting'
         lead.owner_id=employee.id if employee else None

@@ -14,7 +14,7 @@ from .db import get_db
 from .models import Company, Conversation, Document, Lead, Message, TENANT, now
 from .security import digest, limit, visitor
 from .knowledge import retrieve, retrieval_status
-from .scoring import analyze_messages, WITHDRAW_CONTACT
+from .scoring import analyze_messages, WITHDRAW_CONTACT, RULE_VERSION
 from .llm import deepseek_stream
 from .admin import message_data
 from .document_service import document_active, infer_context, matches_context
@@ -56,7 +56,7 @@ def update_analysis(db, conv):
 def backfill_analysis(db):
     # Upgrade persisted v0.1 summaries once; manually confirmed lead levels remain intact.
     for conv in db.scalars(select(Conversation)):
-        if conv.analysis.get('rule_version')!='training-v3':update_analysis(db,conv)
+        if conv.analysis.get('rule_version')!=RULE_VERSION:update_analysis(db,conv)
 
 @router.get('/config')
 def config(db: Session = Depends(get_db)):

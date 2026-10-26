@@ -1,13 +1,14 @@
-"""Replay explicit user events in order; polite turns never reopen cancelled needs."""
+"""Replay explicit user events; cancellation and service context persist across neutral turns."""
 import re
 
+RULE_VERSION = 'training-v4'
 EXAMS = ('公安联考','国考','省考','选调生','事业单位','社会招警','辅警','社区工作者')
 EXAM_PATTERN = re.compile(r'公安联考|(?:公务员)?国考|(?:公务员)?省考|选调生|事业单位|事业编|社会招警|辅警|社区工作者')
 NEGATIVE = re.compile(r'不想|不需要|不用|不打算|不考虑|不要|暂不|不是|没打算|不感兴趣|取消|不考')
 WITHDRAW_CONTACT = re.compile(r'(不用|不要|别|停止|不需要|不再).{0,5}联系|撤回.{0,8}(同意|授权|联系)')
-REJECT_PURCHASE = re.compile(r'(?:不打算|不想|不考虑|没打算|不再|暂不|取消|不准备).{0,5}(?:报名|报班|购买|采购|报考)|不考.{0,10}(?:联考|国考|省考|选调|事业|招警|辅警|社区)|暂时不报|不感兴趣')
+REJECT_PURCHASE = re.compile(r'(?:不打算|不想|不考虑|没打算|不再|暂不|取消|不准备|不需要|不要).{0,5}(?:报名|报班|购买|采购|报考)|不(?:报名|报班|报了|考了)|不考.{0,10}(?:联考|国考|省考|选调|事业|招警|辅警|社区)|暂时不报|不感兴趣')
 NEED = re.compile(r'想报|准备|备考|想学|要考|想了解|想考|打算|改考|转考|零基础')
-ACTION = re.compile(r'报价|多少钱|怎么收费|价格多少|想报名|要报名|想报|还是想报名|预约|试听|顾问联系')
+ACTION = re.compile(r'报价|多少钱|怎么收费|价格多少|想报名|要报名|准备报名|想报|还是想报名|预约|试听|顾问联系')
 SERVICE = re.compile(r'退费|退款|投诉|无法听课|课件打不开|转班|发票|已经报[过了]名|已购')
 SWITCH = re.compile(r'改考|转考|换成|改成|改为|转为')
 
@@ -23,7 +24,7 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
     needs, services, focus, events, purposes = {}, {}, [], [], []
     purpose='课程咨询'
     def need(exam):
-        return needs.setdefault(exam,{'exam_type':exam,'purpose':'课程咨询','state':'active','signals':{},'trial':False,'rejection':None})
+        return needs.setdefault(exam,{'exam_type':exam,'purpose':'课程咨询','state':'active','signals':{},'actions':{},'rejection':None})
     for message in messages:
         content=message['content']
         mid=message.get('id')
@@ -39,27 +40,37 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
                 focus=names
             targets=names or focus or ['未指定考试']
             proof={'quote':clause[:180],'message_id':mid}
-            if REJECT_PURCHASE.search(clause):
+            # "不要取消报名" is not a new cancellation.
+            rejection=REJECT_PURCHASE.search(clause) and not re.search(r'(?:不要|不用|不是|并非).{0,3}(?:取消|不报|不考)',clause)
+            if rejection:
                 cancelled=names or list(needs) or targets
                 for target in cancelled:
-                    n=need(target)
-                    n.update(state='declined',signals={},trial=False,rejection={**proof,'label':'最新明确拒绝','points':0})
+                    need(target).update(state='declined',signals={},actions={},rejection={**proof,'label':'最新明确拒绝','points':0})
                 events.append({**proof,'kind':'purchase_declined','exam_types':cancelled})
                 purpose='课程咨询'
                 continue
-            if re.search(r'(取消|不想|不用|不需要|不要).{0,5}(试听|预约)',clause):
-                for target in targets:
-                    if target in needs:
-                        needs[target]['trial']=False
-                        if needs[target]['signals'].get('action',{}).get('kind')=='trial':needs[target]['signals'].pop('action',None)
+            cancel_trial=re.search(r'(取消|不想|不用|不需要|不要).{0,5}(试听|预约)',clause)
+            cancel_quote=re.search(r'(取消|不想|不用|不需要|不要).{0,5}(询价|报价)',clause)
+            for target in targets:
+                if target in needs:
+                    if cancel_trial:needs[target]['actions'].pop('trial',None)
+                    if cancel_quote:needs[target]['actions'].pop('quote',None)
             if NEGATIVE.search(clause):continue
             if SERVICE.search(clause):
                 purpose='售后服务'
                 if purpose not in purposes:purposes.append(purpose)
-                for target in targets:services[target]={'exam_type':target,'purpose':purpose,'state':'active','evidence':[{**proof,'label':purpose,'points':0}]}
+                for target in targets:
+                    services[target]={'exam_type':target,'purpose':purpose,'state':'active','evidence':[{**proof,'label':purpose,'points':0}]}
                 continue
             explicit_need=bool(NEED.search(clause)) and (bool(names) or bool(focus) or '零基础' in clause)
             explicit_action=bool(ACTION.search(clause))
+            new_course=(explicit_need or explicit_action) and (bool(names) or bool(re.search(r'课程|培训|报班|报名|备考|考班|基础班|笔试班|面试班|试听',clause)))
+            if purpose=='售后服务':
+                if not new_course:continue
+                # A new course after a service episode must provide its own purchase evidence.
+                for target in targets:
+                    if target in needs:needs[target].update(signals={},actions={},state='active',rejection=None)
+                purpose='课程咨询'
             if names:
                 for target in names:need(target)
             if explicit_need or explicit_action:
@@ -70,13 +81,13 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
                 n=need(target)
                 if n['state']!='active':
                     if not (explicit_need or explicit_action):continue
-                    n.update(state='active',signals={},trial=False,rejection=None)
+                    n.update(state='active',signals={},actions={},rejection=None)
                     events.append({**proof,'kind':'purchase_reopened','exam_types':[target]})
                 if explicit_need:n['signals']['need']={**proof,'label':'明确需求','points':25}
                 if explicit_action:
-                    kind='quote' if re.search(r'报价|多少钱|收费|价格',clause) else ('trial' if re.search(r'试听|预约',clause) else 'enroll')
-                    n['signals']['action']={**proof,'label':'主动询价' if kind=='quote' else '主动咨询课程','points':25,'kind':kind}
-                    if re.search(r'试听|预约',clause):n['trial']=True
+                    if re.search(r'报价|多少钱|收费|价格',clause):n['actions']['quote']={**proof,'label':'主动询价','kind':'quote'}
+                    if re.search(r'试听|预约',clause):n['actions']['trial']={**proof,'label':'预约试听','kind':'trial'}
+                    if re.search(r'想报|要报名|准备报名|顾问联系',clause):n['actions']['enroll']={**proof,'label':'主动咨询课程','kind':'enroll'}
                 if re.search(r'下个?月|本月|这个月|下周|近期|尽快|马上|今年.{0,5}(考试|报考)|\d+月.{0,6}(考试|报考)',clause):
                     n['signals']['time']={**proof,'label':'近期计划','points':20}
                 if re.search(r'预算.{0,10}\d|\d+\s*(元|块).{0,6}(预算|以内)|\d+\s*人.{0,5}(报名|团报)',clause):
@@ -86,15 +97,15 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
     tags=[n['exam_type'] for n in active if n['exam_type']!='未指定考试']
     score=0
     for n in needs.values():
-        n['evidence']=list(n['signals'].values()) if n['state']=='active' else ([n['rejection']] if n['rejection'] else [])
+        action_evidence=[{**p,'points':25 if i==0 else 0,'group':'咨询行动（同组不重复计分）'} for i,p in enumerate(n['actions'].values())]
+        n['evidence']=list(n['signals'].values())+action_evidence if n['state']=='active' else ([n['rejection']] if n['rejection'] else [])
         n['score']=min(100,sum(e['points'] for e in n['evidence'])+(15 if contactable and n['state']=='active' else 0))
-        n['level']=_level(n['score'],'action' in n['signals']) if n['state']=='active' and n['signals'] else '一般咨询'
+        n['level']=_level(n['score'],bool(n['actions'])) if n['state']=='active' and (n['signals'] or n['actions']) else '一般咨询'
         if n['state']=='active':
             score=max(score,n['score'])
             evidence+=n['evidence']
             tags.extend(e['label'] for e in n['evidence'])
-            if n['trial']:tags.append('预约试听')
-        n.pop('signals');n.pop('rejection');n.pop('trial')
+        n.pop('signals');n.pop('actions');n.pop('rejection')
     declined=bool(needs) and not active
     if purpose=='售后服务':
         level='不适用';score=0
@@ -118,7 +129,7 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
             'tags':list(dict.fromkeys(tags)),'evidence':evidence,'contactable':contactable,
             'needs':list(needs.values())+list(services.values()),
             'active_exam_types':[n['exam_type'] for n in active if n['exam_type']!='未指定考试'],
-            'state_events':events,'rule_version':'training-v3'}
+            'state_events':events,'rule_version':RULE_VERSION}
 
 def analyze_intent(text: str, contactable: bool=False) -> dict:
     return analyze_messages([{'id':None,'content':line} for line in text.split('\n') if line.strip()],contactable)

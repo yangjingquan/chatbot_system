@@ -45,3 +45,29 @@ class IntentStateTests(unittest.TestCase):
         result=analyze_intent('想报国考课程，想预约试听\n取消试听，但还是想报名国考课程')
         self.assertNotEqual(result['purchase_state'],'declined')
         self.assertNotIn('预约试听',result['tags'])
+
+    def test_direct_purchase_rejection_forms_survive_polite_turns(self):
+        for rejection in ['不报名了','不报班了','不报了','不要报名了','不需要报班','暂时不报了','取消报名','国考不考了']:
+            with self.subTest(rejection=rejection):
+                result=analyze_intent('想报国考课程，预算2000元，下个月考试，想预约试听和报价\n'+rejection+'\n谢谢')
+                self.assertEqual(result['purchase_state'],'declined')
+                self.assertEqual(result['score'],0)
+
+    def test_cancel_quote_removes_quote_evidence_without_cancelling_other_actions(self):
+        result=analyze_intent('想报国考课程，想问报价\n取消报价\n谢谢')
+        self.assertNotIn('主动询价',result['tags'])
+        self.assertFalse(any(e['label']=='主动询价' for e in result['evidence']))
+        self.assertNotEqual(result['purchase_state'],'declined')
+        result=analyze_intent('准备国考，想预约试听和报价\n取消报价')
+        self.assertIn('预约试听',result['tags'])
+        self.assertNotIn('主动询价',result['tags'])
+
+    def test_refund_ellipsis_and_its_timing_never_score_as_purchase(self):
+        result=analyze_intent('我要退费\n国考什么时候退款？\n多少钱能退？')
+        self.assertEqual(result['purpose'],'售后服务')
+        self.assertEqual(result['score'],0)
+        result=analyze_intent('想报国考课程，想预约试听\n我要退费，下个月处理\n想了解国考课程')
+        self.assertEqual(result['purpose'],'课程咨询')
+        self.assertNotIn('近期计划',result['tags'])
+        self.assertNotIn('预约试听',result['tags'])
+        self.assertNotEqual(result['level'],'高意向')

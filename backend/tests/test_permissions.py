@@ -91,3 +91,29 @@ def test_disabled_or_knowledge_employee_cannot_be_assigned(admin):
     admin.patch('/api/admin/staff/'+person['id'],json={'is_active':False})
     for owner in (person['id'],knowledge['id'],'unknown-id'):
         assert admin.patch('/api/admin/leads/'+lid,json={'owner_id':owner}).status_code==422
+
+def test_claimed_conversation_cannot_expose_another_advisors_lead(admin):
+    operator,client=employee(admin,'support')
+    owner,advisor=employee(admin,'advisor')
+    lid,sid=new_lead(admin)
+    assert client.post('/api/admin/conversations/'+sid+'/takeover').status_code==200
+    assert admin.patch('/api/admin/leads/'+lid,json={'owner_id':owner['id']}).status_code==200
+    admin.patch('/api/admin/staff/'+operator['id'],json={'role':'advisor'})
+    assert client.post('/api/auth/login',json={'email':operator['email'],'password':PASSWORD}).status_code==200
+    assert client.get('/api/admin/leads/'+lid).status_code==404
+    assert client.get('/api/admin/conversations/'+sid).status_code==404
+    assert all(c['id']!=sid for c in client.get('/api/admin/conversations').json())
+    assert client.get('/api/admin/overview').json()['counts']['conversations']==0
+    assert advisor.get('/api/admin/conversations/'+sid).json()['lead']['id']==lid
+
+def test_legacy_claim_does_not_override_existing_lead_scope(admin):
+    from app.db import SessionLocal
+    from app.models import Conversation
+    first,c1=employee(admin,'advisor')
+    second,c2=employee(admin,'advisor')
+    lid,sid=new_lead(admin)
+    admin.patch('/api/admin/leads/'+lid,json={'owner_id':second['id']})
+    with SessionLocal() as db:
+        db.get(Conversation,sid).assigned_to_id=first['id']
+        db.commit()
+    assert c1.get('/api/admin/conversations/'+sid).status_code==404

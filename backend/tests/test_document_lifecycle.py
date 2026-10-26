@@ -108,3 +108,22 @@ def test_switch_region_does_not_feed_previous_policy_answer_to_model(admin,monke
     admin.post(f'/api/widget/sessions/{session["id"]}/messages',headers=headers,json={'content':'2027浙江国考课程多少钱','client_id':str(uuid.uuid4())})
     assert captured
     assert all('REGION-9524' not in m['content'] for m in captured if m['role']=='assistant')
+
+def test_policy_context_belongs_to_each_exam_instead_of_global_mix():
+    from app.document_service import infer_context
+    history=['2027江苏国考报名条件','2028浙江省考报名条件']
+    assert infer_context('国考报名条件呢',history)=={'exam_type':'国考','exam_year':2027,'region':'江苏'}
+    assert infer_context('省考报名条件呢',history)=={'exam_type':'省考','exam_year':2028,'region':'浙江'}
+    nationwide=infer_context('那全国政策呢',['2027江苏国考报名条件'])
+    assert nationwide['region']=='全国'
+    unclear=infer_context('选调生条件呢',history)
+    assert unclear.get('exam_year') is None and unclear.get('region') is None
+
+def test_retrieval_cannot_combine_one_exams_year_region_with_another(admin):
+    from app.db import SessionLocal
+    from app.knowledge import retrieve
+    from app.document_service import infer_context
+    doc=create(admin,title='拼接政策验收',content='拼接政策验收 MIX-2368，特定地区年度报名条件。',knowledge_type='policy',exam_type='国考',exam_year=2028,region='浙江',source_url='https://www.scs.gov.cn/',policy_verified=True)
+    context=infer_context('国考报名条件呢',['2027江苏国考报名条件','2028浙江省考报名条件'])
+    with SessionLocal() as db:
+        assert all(s['document_id']!=doc['id'] for s in retrieve(db,'拼接政策验收 MIX-2368',context=context))

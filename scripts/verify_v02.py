@@ -65,9 +65,16 @@ with TestClient(app, headers={'Origin': os.environ.get('PUBLIC_ORIGIN', 'http://
     assert advisor.get('/api/admin/leads-export').status_code == 403
     verify(client.patch('/api/admin/leads/' + lead['id'], json={'owner_id': None}))
     assert advisor.get('/api/admin/conversations/' + session['id']).status_code == 404
+    # Even a stale claim from a former support role cannot bypass the lead owner.
+    from app.db import SessionLocal
+    from app.models import Conversation
+    with SessionLocal() as db:
+        db.get(Conversation, session['id']).assigned_to_id = person['id']
+        db.commit()
+    assert advisor.get('/api/admin/conversations/' + session['id']).status_code == 404
     verify(client.patch('/api/admin/staff/' + person['id'], json={'is_active': False}))
     assert advisor.get('/api/auth/me').status_code == 401
     migrate_schema(engine)
     assert verify(client.get(path))['version'] == 3
     print(json.dumps({'status': 'passed', 'preserved_rows': before, 'concurrent_edit_statuses': statuses,
-                      'checks': ['restored-v01-data', 'additive-migration', 'history-backfill', 'draft-isolation', 'publish-and-rollback', 'row-lock-conflict', 'advisor-scope', 'reassignment-revokes', 'disabled-session', 'migration-rerun']}, ensure_ascii=False))
+                      'checks': ['restored-v01-data', 'additive-migration', 'history-backfill', 'draft-isolation', 'publish-and-rollback', 'row-lock-conflict', 'advisor-scope', 'reassignment-revokes', 'stale-claim-denied', 'disabled-session', 'migration-rerun']}, ensure_ascii=False))
