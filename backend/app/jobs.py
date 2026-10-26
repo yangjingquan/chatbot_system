@@ -4,10 +4,10 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, func
 from sqlalchemy.orm import Session
 from .db import get_db
-from .models import Admin, Document, DocumentJob, now
+from .models import Admin, Document, DocumentJob, Chunk, now
 from .permissions import require, scoped_object
 from .querying import Paging, paginate
 
@@ -18,10 +18,23 @@ def job_data(j):
     return {k:(getattr(j,k).isoformat() if k.endswith('_at') and getattr(j,k) else getattr(j,k)) for k in ('id','kind','status','document_id','progress','stage','attempts','error','created_at','updated_at')}
 
 def enqueue_index(db,doc):
-    existing=db.scalar(select(DocumentJob).where(DocumentJob.document_id==doc.id,DocumentJob.kind=='index',DocumentJob.status.in_(['queued','running'])))
-    if existing and existing.payload.get('version')==doc.version:return existing
+    db.flush()
+    doc=db.scalar(select(Document).where(Document.id==doc.id,Document.tenant_id==doc.tenant_id).with_for_update().execution_options(populate_existing=True))
+    if doc.status!='published':raise HTTPException(409,'仅已发布资料可建立向量索引')
+    existing=db.scalar(select(DocumentJob).where(DocumentJob.document_id==doc.id,DocumentJob.kind=='index',DocumentJob.payload['version'].as_integer()==doc.version,DocumentJob.status.in_(['queued','running'])))
+    if existing:return existing
     j=DocumentJob(tenant_id=doc.tenant_id,document_id=doc.id,kind='index',payload={'version':doc.version})
     db.add(j);db.flush();return j
+
+def backfill_index_jobs(db):
+    null_vector=Chunk.embedding.is_(None)
+    if db.bind.dialect.name=='sqlite':null_vector=or_(null_vector,func.json_type(Chunk.embedding)=='null')
+    missing=select(Chunk.id).where(Chunk.document_id==Document.id,null_vector).exists()
+    docs=db.scalars(select(Document).where(Document.status=='published',missing).order_by(Document.id).with_for_update(skip_locked=True)).all()
+    for doc in docs:
+        # Completed/failed attempts retain their history and cap across restarts.
+        previous=db.scalar(select(DocumentJob.id).where(DocumentJob.document_id==doc.id,DocumentJob.kind=='index',DocumentJob.payload['version'].as_integer()==doc.version))
+        if not previous:enqueue_index(db,doc)
 
 def claim(db,worker,job_id=None):
     eligible=or_(DocumentJob.status=='queued',and_(DocumentJob.status=='running',DocumentJob.lease_until<now()))

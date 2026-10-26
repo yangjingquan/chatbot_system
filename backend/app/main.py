@@ -10,6 +10,7 @@ from .knowledge import warm_embeddings, retrieval_status
 from .encryption import migrate_contacts
 from . import admin, chat, staff, documents, catalog, students, reception, quality, jobs
 from .migrations import migrate_schema
+from .config import settings
 
 @asynccontextmanager
 async def lifespan(app):
@@ -21,6 +22,7 @@ async def lifespan(app):
         catalog.seed_catalog(db)
         chat.backfill_analysis(db)
         students.backfill_crm(db)
+        if settings().embedding_enabled:jobs.backfill_index_jobs(db)
         db.commit()
     thread=threading.Thread(target=warm_embeddings,daemon=True)
     thread.start()

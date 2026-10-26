@@ -107,7 +107,7 @@ class ChatInput(BaseModel):
 def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depends(get_db)):
     conv=visitor(request,session_id,db)
     # Serialize creation of pending messages across simultaneous HTTP requests.
-    conv=db.scalar(select(Conversation).where(Conversation.id==conv.id).with_for_update())
+    conv=db.scalar(select(Conversation).where(Conversation.id==conv.id).with_for_update().execution_options(populate_existing=True))
     if not data.content.strip(): raise HTTPException(422,'请输入问题')
     limit('chat:'+conv.id,20)
     existing=db.scalar(select(Message).where(Message.conversation_id==conv.id,Message.client_id==data.client_id))
@@ -241,7 +241,9 @@ class ContactInput(BaseModel):
 @router.post('/sessions/{session_id}/contact')
 def contact(session_id: str, data: ContactInput, request: Request, db: Session = Depends(get_db)):
     conv=visitor(request,session_id,db)
-    conv=db.scalar(select(Conversation).where(Conversation.id==conv.id).with_for_update())
+    # Match CRM lock order so staff/ownership changes cannot race first-contact attribution.
+    db.scalar(select(Company).where(Company.id==conv.tenant_id).with_for_update())
+    conv=db.scalar(select(Conversation).where(Conversation.id==conv.id).with_for_update().execution_options(populate_existing=True))
     limit('contact:'+conv.id,6,300)
     value=data.contact.strip()
     if not re.fullmatch(r'(1[3-9]\d{9}|[^\s@]+@[^\s@]+\.[^\s@]+)',value):
@@ -251,6 +253,13 @@ def contact(session_id: str, data: ContactInput, request: Request, db: Session =
         lead=Lead(conversation_id=conv.id,name=data.name.strip() or '网站访客',contact=value,
                   consent_text=db.get(Company,TENANT).config['contact_notice'],is_demo=conv.is_demo,contact_allowed=True)
         db.add(lead)
+        # An explicitly transferred anonymous advisor conversation stays with that advisor.
+        # Existing leads always retain their independently managed CRM owner.
+        if conv.assigned_to_id:
+            from .models import Admin
+            assigned=db.get(Admin,conv.assigned_to_id)
+            if assigned and assigned.tenant_id==conv.tenant_id and assigned.is_active and assigned.role=='advisor':
+                lead.owner_id=assigned.id;lead.owner=assigned.name
     else:
         lead.name,lead.contact=data.name.strip() or '网站访客',value
         lead.contact_verified=False

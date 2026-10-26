@@ -71,6 +71,9 @@ def check_batch(b):
     if b.mode in ('offline','hybrid') and not b.location.strip():raise HTTPException(422,'线下或混合授课须填写上课地点')
     for text in (b.name,b.location,b.schedule):check_commercial_text(text)
 
+def batch_available(b,c):
+    return bool(c and b and c.tenant_id==b.tenant_id and c.status=='active' and b.sale_status=='open' and (not b.ends_at or aware(b.ends_at)>=aware(now())))
+
 def check_commercial_text(value):
     if has_amount(value):raise HTTPException(422,'价格和课时请填写专用字段，不要写入名称、说明或开班安排')
 
@@ -136,7 +139,7 @@ def public_source(db,c):
         if not visible:pieces.append('当前暂无已确认可报名班次，价格和开班时间需人工核实。')
         for b in visible:
             versions.append(b.id+':'+str(b.version))
-            open_now=b.sale_status=='open' and (not b.ends_at or aware(b.ends_at)>=aware(now()))
+            open_now=batch_available(b,c)
             label='可咨询报名' if open_now else {'paused':'停售','sold_out':'已满班','ended':'已结束'}.get(b.sale_status,'已结束')
             pieces.append(f'班次：{safe(b.name,"班次名称待校对")}；状态：{label}。')
             if not open_now:continue

@@ -91,6 +91,14 @@ def trial_data(db,t,public=False):
     if not public:result['note']=t.note
     return result
 
+def locked_batch(db,bid,tenant):
+    initial=db.scalar(select(CourseBatch).where(CourseBatch.id==bid,CourseBatch.tenant_id==tenant))
+    if not initial:return None,None
+    # Course then batch is the shared ordering; reread latest values after waiting on either.
+    course=db.scalar(select(Course).where(Course.id==initial.course_id,Course.tenant_id==tenant).with_for_update().execution_options(populate_existing=True))
+    batch=db.scalar(select(CourseBatch).where(CourseBatch.id==bid,CourseBatch.tenant_id==tenant).with_for_update().execution_options(populate_existing=True))
+    return batch,course
+
 class TrialInput(BaseModel):
     batch_id:str=Field(max_length=36)
     requested_at:datetime
@@ -98,7 +106,7 @@ class TrialInput(BaseModel):
 
 @router.get('/widget/trial-batches')
 def public_batches(db:Session=Depends(get_db)):
-    return [{'id':b.id,'course_name':c.name,'name':b.name,'mode':b.mode,'location':b.location,'schedule':b.schedule,'is_demo':c.is_demo} for b,c in db.execute(select(CourseBatch,Course).join(Course,CourseBatch.course_id==Course.id).where(Course.tenant_id=='zhixing-demo',Course.status=='active',CourseBatch.sale_status=='open'))]
+    return [{'id':b.id,'course_name':c.name,'name':b.name,'mode':b.mode,'location':b.location,'schedule':b.schedule,'is_demo':c.is_demo} for b,c in db.execute(select(CourseBatch,Course).join(Course,CourseBatch.course_id==Course.id).where(Course.tenant_id=='zhixing-demo',CourseBatch.tenant_id==Course.tenant_id,Course.status=='active',CourseBatch.sale_status=='open',or_(CourseBatch.ends_at.is_(None),CourseBatch.ends_at>=now())))]
 
 @router.get('/widget/sessions/{sid}/trials')
 def visitor_trials(sid:str,request:Request,db:Session=Depends(get_db)):
@@ -115,9 +123,10 @@ def create_trial(sid:str,data:TrialInput,request:Request,db:Session=Depends(get_
     lead=db.scalar(select(Lead).where(Lead.conversation_id==sid,Lead.contact_allowed.is_(True)))
     if not lead:raise HTTPException(422,'请先自愿留下本次试听的联系方式并同意联系')
     if not now()<aware(data.requested_at)<now()+timedelta(days=180):raise HTTPException(422,'请选择未来 180 天内的意向时间')
-    b=db.scalar(select(CourseBatch).where(CourseBatch.id==data.batch_id,CourseBatch.tenant_id==conv.tenant_id).with_for_update())
-    c=db.get(Course,b.course_id) if b else None
-    if not c or c.status!='active' or b.sale_status!='open':raise HTTPException(422,'该班次当前不接受试听申请')
+    from .catalog import batch_available
+    b,c=locked_batch(db,data.batch_id,conv.tenant_id)
+    if not batch_available(b,c):raise HTTPException(422,'该班次当前不接受试听申请')
+    if b.ends_at and aware(data.requested_at)>aware(b.ends_at):raise HTTPException(422,'意向试听时间不能晚于班次结束时间')
     t=Trial(tenant_id=conv.tenant_id,conversation_id=sid,batch_id=b.id,requested_at=data.requested_at,client_id=data.client_id)
     db.add(t);db.commit();return trial_data(db,t,True)
 
@@ -154,8 +163,10 @@ def patch_trial(tid:str,data:TrialPatch,user:Admin=Depends(require('conversation
         if not a or a.tenant_id!=user.tenant_id or not has_permission(a,'conversations.handle'):raise HTTPException(422,'请选择有效顾问或客服')
         if a.role=='advisor' and not db.scalar(scope_conversations(select(Conversation.id).where(Conversation.id==t.conversation_id),a)):raise HTTPException(422,'请先将线索分配给该顾问')
         if not scheduled or aware(scheduled)<=now():raise HTTPException(422,'请填写未来的确认时间')
-        b=db.get(CourseBatch,t.batch_id);c=db.get(Course,b.course_id)
-        if c.status!='active' or b.sale_status!='open':raise HTTPException(409,'班次已停止接收申请')
+        from .catalog import batch_available
+        b,c=locked_batch(db,t.batch_id,user.tenant_id)
+        if not batch_available(b,c):raise HTTPException(409,'班次已结束或停止接收申请')
+        if b.ends_at and aware(scheduled)>aware(b.ends_at):raise HTTPException(422,'确认时间不能晚于班次结束时间')
         t.advisor_id=a.id;t.scheduled_at=scheduled
     t.status=data.status;t.note=data.note;t.version+=1
     from .admin import record

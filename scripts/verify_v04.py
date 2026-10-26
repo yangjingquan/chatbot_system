@@ -1,5 +1,5 @@
 """Real PostgreSQL regression. Operates ONLY on the disposable restored v0.4 rehearsal DB."""
-import os, uuid, json, threading
+import os, uuid, json, threading, time
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
 os.environ['DATABASE_URL']=os.environ['DATABASE_URL'].rsplit('/',1)[0]+'/zhixing_v04_rehearsal'
@@ -41,6 +41,19 @@ with TestClient(app,headers={'Origin':os.environ['PUBLIC_ORIGIN']}) as admin:
     assert claims==[200,409],claims
     detail=ok(admin.get('/api/admin/conversations/'+sid))
     assert detail['assigned_to_id'] in [p['id'] for p,_ in people]
+    import app.chat as chat
+    stale_session=ok(admin.post('/api/widget/sessions',json={}))
+    visitor_original=chat.visitor
+    def takeover_after_initial_read(request,session_id,db):
+        conv=visitor_original(request,session_id,db)
+        if session_id==stale_session['id']:ok(people[0][1].post('/api/admin/conversations/'+session_id+'/takeover'))
+        return conv
+    chat.visitor=takeover_after_initial_read
+    try:
+        response=admin.post('/api/widget/sessions/'+stale_session['id']+'/messages',headers={'Authorization':'Bearer '+stale_session['token']},json={'content':'请转人工','client_id':uuid.uuid4().hex})
+        assert response.status_code==200
+        assert ok(admin.get('/api/admin/conversations/'+stale_session['id']))['status']=='human'
+    finally:chat.visitor=visitor_original
     ok(admin.post(f'/api/widget/sessions/{sid}/contact',headers=headers,json={'name':'v0.4并发测试','contact':'pg-v04@example.invalid','consent':True}))
     with SessionLocal() as db:batch=db.scalar(select(CourseBatch).where(CourseBatch.sale_status=='open'));bid=batch.id
     trial=ok(admin.post(f'/api/widget/sessions/{sid}/trials',headers=headers,json={'batch_id':bid,'requested_at':(now()+timedelta(days=7)).isoformat(),'client_id':uuid.uuid4().hex}))
@@ -49,6 +62,23 @@ with TestClient(app,headers={'Origin':os.environ['PUBLIC_ORIGIN']}) as admin:
     def confirm(i):barrier.wait();return people[i][1].patch('/api/admin/trials/'+trial['id'],json=body).status_code
     with ThreadPoolExecutor(max_workers=2) as pool:confirmations=sorted(pool.map(confirm,range(2)))
     assert confirmations==[200,409],confirmations
+    # Confirmation must reread a concurrently paused batch after its lock is released.
+    current=next(t for t in ok(admin.get('/api/admin/trials'))['items'] if t['id']==trial['id'])
+    with SessionLocal() as blocker,ThreadPoolExecutor(max_workers=1) as pool:
+        b=blocker.scalar(select(CourseBatch).where(CourseBatch.id==bid).with_for_update())
+        b.sale_status='paused';blocker.flush()
+        future=pool.submit(lambda:people[0][1].patch('/api/admin/trials/'+trial['id'],json={**body,'version':current['version']}))
+        deadline=time.monotonic()+8;waiting=False
+        try:
+            while time.monotonic()<deadline:
+                with engine.connect() as conn:
+                    waiting=bool(conn.execute(text("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query ILIKE '%course_batches%' AND pid<>pg_backend_pid()")).first())
+                if waiting:break
+                if future.done():break
+                time.sleep(.02)
+        finally:blocker.commit()
+        assert waiting,'Confirmation did not wait for current batch state'
+        assert future.result(timeout=8).status_code==409
     job=ok(admin.post('/api/admin/document-jobs/upload',files={'file':('concurrent.txt','并发解析只能生成一份草稿'.encode(),'text/plain')}))
     barrier=threading.Barrier(2)
     def take_job(i):
@@ -92,4 +122,4 @@ with TestClient(app,headers={'Origin':os.environ['PUBLIC_ORIGIN']}) as admin:
             assert [s['document_id'] for s in result]==[target.id],result
         finally:k._model=original
     migrate_schema(engine)
-    print(json.dumps({'status':'passed','preserved_rows':before,'concurrent_takeover':claims,'concurrent_confirmation':confirmations,'exclusive_job_claims':1,'capacity_chunks':5100,'checks':['additive-repeat-migration','human-claim-lock','trial-version-lock','skip-locked-exclusive-claim','expired-lease-recovery','stale-worker-fencing','postgres-gin-search-beyond-5000','tenant-public-filters','pgvector-sql-distance']},ensure_ascii=False))
+    print(json.dumps({'status':'passed','preserved_rows':before,'concurrent_takeover':claims,'concurrent_confirmation':confirmations,'exclusive_job_claims':1,'capacity_chunks':5100,'checks':['additive-repeat-migration','human-claim-lock','post-lock-state-refresh','trial-version-lock','confirmation-vs-pause-lock','skip-locked-exclusive-claim','expired-lease-recovery','stale-worker-fencing','postgres-gin-search-beyond-5000','tenant-public-filters','pgvector-sql-distance']},ensure_ascii=False))
