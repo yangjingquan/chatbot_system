@@ -33,10 +33,15 @@ def lead_data(l):
             ('id','conversation_id','student_id','next_followup_at','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','owner_id','manual_level','is_demo','created_at','updated_at')}
 
 def conversation_data(db, c, full=False, user=None):
+    from .reception import unread
     messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
     result = {'id':c.id, 'visitor_name':c.visitor_name, 'source_page':c.source_page, 'status':c.status,
               'analysis':c.analysis, 'assigned_to_id':c.assigned_to_id, 'is_demo':c.is_demo, 'created_at':c.created_at.isoformat(), 'updated_at':c.updated_at.isoformat(),
               'last_message':messages[-1].content[:120] if messages else '', 'message_count':len(messages)}
+    result['unread_count']=unread(db,c,user)
+    result['waiting_since']=c.waiting_since.isoformat() if c.waiting_since else None
+    assignee=db.get(Admin,c.assigned_to_id) if c.assigned_to_id else None
+    result['assigned_name']=assignee.name if assignee else '未分配'
     if full:
         result['messages'] = [message_data(m) for m in messages]
         lead = db.scalar(scope_leads(select(Lead).where(Lead.conversation_id == c.id),user)) if user else None
@@ -107,8 +112,8 @@ def update_settings(data: ConfigPatch, user: Admin = Depends(require('settings.w
 
 @router.get('/admin/conversations')
 def conversations(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:str='',user:Admin=Depends(require('conversations.read')),db:Session=Depends(get_db)):
-    query=conversation_query(db,user,filters,status).order_by(Conversation.created_at.desc(),Conversation.id.desc())
-    return paginate(db,query,paging,lambda c:conversation_data(db,c))
+    query=conversation_query(db,user,filters,status).order_by(Conversation.waiting_since.asc().nulls_last(),Conversation.created_at.desc(),Conversation.id.desc())
+    return paginate(db,query,paging,lambda c:conversation_data(db,c,user=user))
 
 @router.get('/admin/conversations/{sid}')
 def conversation(sid: str, user: Admin = Depends(require('conversations.read')), db: Session = Depends(get_db)):
@@ -126,11 +131,13 @@ def mark_demo(sid: str, user: Admin = Depends(require('settings.write')), db: Se
 
 @router.post('/admin/conversations/{sid}/takeover')
 def takeover(sid: str, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
-    conv = owned(db,Conversation,sid,user)
+    from .reception import lock_conversation
+    conv = lock_conversation(db,sid,user)
     if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
         raise HTTPException(409,'此咨询正由其他员工接待，请由管理员调整接待人')
     conv.status = 'human'
     conv.assigned_to_id = user.id
+    conv.waiting_since = None
     record(db,user,'接管咨询',sid)
     db.commit()
     return {'status':conv.status}
@@ -140,7 +147,8 @@ class TextInput(BaseModel):
 
 @router.post('/admin/conversations/{sid}/reply')
 def reply(sid: str, data: TextInput, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
-    conv = owned(db,Conversation,sid,user)
+    from .reception import lock_conversation
+    conv = lock_conversation(db,sid,user)
     if conv.status != 'human': raise HTTPException(409,'请先接管此咨询')
     if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
         raise HTTPException(409,'此咨询由其他员工接待，请先申请接管')
@@ -155,11 +163,13 @@ class StatusInput(BaseModel):
 
 @router.post('/admin/conversations/{sid}/status')
 def change_status(sid: str, data: StatusInput, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
-    conv = owned(db,Conversation,sid,user)
+    from .reception import lock_conversation
+    conv = lock_conversation(db,sid,user)
     if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
         raise HTTPException(409,'此咨询正由其他员工接待，请由管理员调整接待状态')
     conv.status = data.status
     conv.assigned_to_id = None
+    conv.waiting_since = None
     record(db,user,'调整接待状态',sid)
     db.commit()
     return {'status':conv.status}

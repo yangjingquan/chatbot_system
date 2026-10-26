@@ -13,6 +13,7 @@ import {
 import { api } from "./api";
 import { Badge, ErrorBox } from "./ui";
 import { MessageBubble } from "./Conversations";
+import { WidgetTrial } from "./Reception";
 import {
   consumeEvents,
   restoreSession,
@@ -212,7 +213,17 @@ export function Chat() {
               ),
             );
         }
-        if (kind === "done") setStatus(item.status || "bot");
+        if (kind === "done") {
+          setStatus(item.status || "bot");
+          if (item.id)
+            setMessages((old) =>
+              old.map((m) =>
+                m.id === assistantId
+                  ? { ...m, id: item.id, state: "completed" }
+                  : m,
+              ),
+            );
+        }
         if (kind === "error") {
           setError(item.message);
           setMessages((old) =>
@@ -256,6 +267,21 @@ export function Chat() {
         headers: tokenHeaders(credential),
       });
       setStatus("waiting");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+  async function feedback(id: string, rating: string) {
+    if (!credential) return;
+    try {
+      await api(`/widget/sessions/${credential.id}/feedback/${id}`, {
+        method: "PUT",
+        headers: tokenHeaders(credential),
+        body: JSON.stringify({ rating }),
+      });
+      setMessages((old) =>
+        old.map((m) => (m.id === id ? { ...m, feedback: rating } : m)),
+      );
     } catch (e: any) {
       setError(e.message);
     }
@@ -371,7 +397,7 @@ export function Chat() {
           )}
         </div>
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
+          <MessageBubble key={m.id} message={m} onFeedback={feedback} />
         ))}
         {busy && (
           <div className="typing" role="status">
@@ -392,6 +418,14 @@ export function Chat() {
             <ShieldCheck size={17} />
             <p>已记录联系请求，顾问核实后会就本次咨询回复。</p>
           </div>
+        )}
+        {credential && (
+          <WidgetTrial
+            key={credential.id}
+            credential={credential}
+            hasContact={hasContact}
+            onContact={() => setContactOpen(true)}
+          />
         )}
         {contactOpen && (
           <form className="contact-form" onSubmit={submitContact}>

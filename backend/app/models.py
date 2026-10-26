@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy import String, Text, JSON, DateTime, Boolean, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import String, Text, JSON, DateTime, Boolean, ForeignKey, Integer, UniqueConstraint, Numeric
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
 from .db import Base
@@ -91,6 +91,7 @@ class Conversation(Base):
     source_page: Mapped[str] = mapped_column(String(300), default='官网')
     status: Mapped[str] = mapped_column(String(24), default='bot')
     assigned_to_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     analysis: Mapped[dict] = mapped_column(JSON, default=dict)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -145,6 +146,93 @@ class FollowUp(Base):
     author: Mapped[str] = mapped_column(String(100))
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class Presence(Base):
+    __tablename__ = 'staff_presence'
+    admin_id: Mapped[str] = mapped_column(ForeignKey('admins.id'), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default='offline')
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class AnswerFeedback(Base):
+    __tablename__ = 'answer_feedback'
+    message_id: Mapped[str] = mapped_column(ForeignKey('messages.id'), primary_key=True)
+    rating: Mapped[str] = mapped_column(String(12))
+    comment: Mapped[str] = mapped_column(Text, default='')
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class KnowledgeGap(Base):
+    __tablename__ = 'knowledge_gaps'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    message_id: Mapped[str] = mapped_column(ForeignKey('messages.id'), unique=True)
+    question: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(24), default='open', index=True)
+    note: Mapped[str] = mapped_column(Text, default='')
+    document_id: Mapped[str | None] = mapped_column(ForeignKey('documents.id'), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class ModelCall(Base):
+    __tablename__ = 'model_calls'
+    message_id: Mapped[str] = mapped_column(ForeignKey('messages.id'), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    model: Mapped[str] = mapped_column(String(100))
+    usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    pricing: Mapped[dict] = mapped_column(JSON, default=dict)
+    estimated_cny: Mapped[float | None] = mapped_column(Numeric(20,8), nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    error_type: Mapped[str] = mapped_column(String(40), default='')
+    state: Mapped[str] = mapped_column(String(24), default='pending')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+class Evaluation(Base):
+    __tablename__ = 'quality_evaluations'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    cases: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class DocumentJob(Base):
+    __tablename__ = 'document_jobs'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey('admins.id'), nullable=True)
+    document_id: Mapped[str | None] = mapped_column(ForeignKey('documents.id'), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24), default='queued', index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    stage: Mapped[str] = mapped_column(String(100), default='等待处理')
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str] = mapped_column(Text, default='')
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+class ConversationRead(Base):
+    __tablename__ = 'conversation_reads'
+    conversation_id: Mapped[str] = mapped_column(ForeignKey('conversations.id'), primary_key=True)
+    admin_id: Mapped[str] = mapped_column(ForeignKey('admins.id'), primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    message_id: Mapped[str] = mapped_column(String(36))
+
+class Trial(Base):
+    __tablename__ = 'trial_requests'
+    __table_args__ = (UniqueConstraint('conversation_id','client_id',name='uq_trial_request'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey('conversations.id'), index=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey('course_batches.id'))
+    client_id: Mapped[str] = mapped_column(String(80))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    advisor_id: Mapped[str | None] = mapped_column(ForeignKey('admins.id'), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default='pending', index=True)
+    note: Mapped[str] = mapped_column(Text, default='')
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 class Audit(Base):
     __tablename__ = 'audit_logs'

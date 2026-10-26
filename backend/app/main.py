@@ -8,7 +8,7 @@ from .db import Base, engine, SessionLocal
 from .seed import seed
 from .knowledge import warm_embeddings, retrieval_status
 from .encryption import migrate_contacts
-from . import admin, chat, staff, documents, catalog, students
+from . import admin, chat, staff, documents, catalog, students, reception, quality, jobs
 from .migrations import migrate_schema
 
 @asynccontextmanager
@@ -26,13 +26,16 @@ async def lifespan(app):
     thread.start()
     yield
 
-app=FastAPI(title='知行客服 API',version='0.3.0',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json',redoc_url=None)
+app=FastAPI(title='知行客服 API',version='0.4.0',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json',redoc_url=None)
 app.include_router(admin.router,prefix='/api')
 app.include_router(chat.router,prefix='/api')
 app.include_router(staff.router,prefix='/api')
 app.include_router(documents.router,prefix='/api')
 app.include_router(catalog.router,prefix='/api')
 app.include_router(students.router,prefix='/api')
+app.include_router(reception.router,prefix='/api')
+app.include_router(quality.router,prefix='/api')
+app.include_router(jobs.router,prefix='/api')
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError):
@@ -54,4 +57,4 @@ async def safety_headers(request: Request, call_next):
 def health():
     with engine.connect() as conn:
         conn.execute(text('SELECT 1'))
-    return {'status':'ok','version':'0.3.0','retrieval':retrieval_status()}
+    return {'status':'ok','version':'0.4.0','retrieval':retrieval_status()}

@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
   backend:
     build: ./backend
-    environment:
+    environment: &backend_environment
       DATABASE_URL: postgresql+psycopg://zhixing:${POSTGRES_PASSWORD}@db:5432/zhixing
       REDIS_URL: redis://redis:6379/0
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@zhixing.local}
@@ -57,6 +57,17 @@ services:
       timeout: 5s
       retries: 10
       start_period: 90s
+    restart: unless-stopped
+  worker:
+    build: ./backend
+    command: [python, -m, app.worker]
+    environment: *backend_environment
+    volumes:
+      - app_data:/data
+      - model_cache:/models
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
   web:
     build: ./frontend

@@ -8,7 +8,7 @@ def migrate_schema(engine):
         'admins':{'role':"VARCHAR(24) NOT NULL DEFAULT 'admin'",'is_active':'BOOLEAN NOT NULL DEFAULT TRUE'},
         'leads':{'contact_allowed':'BOOLEAN NOT NULL DEFAULT TRUE','owner_id':'VARCHAR(36)',
                  'contact_hash':'VARCHAR(64)','student_id':'VARCHAR(36)','next_followup_at':'TIMESTAMP'},
-        'conversations':{'assigned_to_id':'VARCHAR(36)'},
+        'conversations':{'assigned_to_id':'VARCHAR(36)','waiting_since':'TIMESTAMP WITH TIME ZONE' if engine.dialect.name=='postgresql' else 'TIMESTAMP'},
         'documents':{'edit_sequence':'INTEGER NOT NULL DEFAULT 0',
                      'knowledge_type':"VARCHAR(24) NOT NULL DEFAULT 'general'",
                      'exam_type':"VARCHAR(40) NOT NULL DEFAULT '通用'",'region':"VARCHAR(80) NOT NULL DEFAULT '全国'",
@@ -31,6 +31,7 @@ def migrate_schema(engine):
             conn.execute(text('ALTER TABLE leads ALTER COLUMN contact TYPE TEXT'))
             conn.execute(text('CREATE INDEX IF NOT EXISTS ix_leads_owner_id ON leads(owner_id)'))
             conn.execute(text('CREATE INDEX IF NOT EXISTS ix_conversations_assigned_to_id ON conversations(assigned_to_id)'))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_terms_gin ON chunks USING gin (to_tsvector('simple', terms))"))
             for field in ('contact_hash','student_id','next_followup_at'):
                 conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_leads_{field} ON leads({field})'))
         from .encryption import migrate_contacts

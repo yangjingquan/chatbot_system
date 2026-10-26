@@ -39,10 +39,8 @@ def ingest_document(db, doc: Document) -> int:
     db.flush()
     db.execute(delete(Chunk).where(Chunk.document_id == doc.id, Chunk.tenant_id == doc.tenant_id))
     texts = split_content(doc.content)
+    # Publication switches text chunks atomically; vectors are prepared by a durable worker.
     embeddings = [None] * len(texts)
-    if _model is not None and texts:
-        with _model_lock:
-            embeddings = [v.tolist() for v in _model.embed(texts)]
     for i, (text, vector) in enumerate(zip(texts, embeddings)):
         db.add(Chunk(document_id=doc.id, tenant_id=doc.tenant_id, text=text,
                      terms=' '.join(terms(doc.title + '\n' + text)), position=i, embedding=vector))
@@ -62,76 +60,14 @@ def warm_embeddings():
         from fastembed import TextEmbedding
         from .db import SessionLocal
         model = TextEmbedding(settings().embedding_model, cache_dir='/models', threads=2)
-        with SessionLocal() as db:
-            chunks = db.scalars(select(Chunk).where(Chunk.embedding.is_(None))).all()
-            for i in range(0, len(chunks), 32):
-                batch = chunks[i:i + 32]
-                vectors = list(model.embed([c.text for c in batch]))
-                for chunk, vector in zip(batch, vectors):
-                    chunk.embedding = vector.tolist()
-                db.commit()
         _model = model
         _model_status = 'ready'
     except Exception:
         _model_status = 'unavailable'
 
 def _retrieve_documents(db, query: str, public_only: bool = True, tenant_id: str = TENANT, limit: int = 4, context: dict | None = None) -> list[dict]:
-    from .document_service import matches_context, infer_context
-    statement = select(Chunk, Document).join(Document, Chunk.document_id == Document.id).where(
-        Chunk.tenant_id == tenant_id, Document.tenant_id == tenant_id, Document.status == 'published')
-    if public_only:
-        statement = statement.where(Document.visibility == 'public')
-    # Bounded first-release corpus. Scale beyond this with DB-side lexical ranking.
-    rows = db.execute(statement.limit(5000)).all()
-    scope=context if context is not None else infer_context(query)
-    rows=[(chunk,doc) for chunk,doc in rows if matches_context(doc,scope)]
-    if not rows:
-        return []
-    q = set(terms(query))
-    if not q:
-        return []
-    token_lists = [c.terms.split() for c, _ in rows]
-    frequencies = Counter(t for tokens in token_lists for t in set(tokens))
-    average = sum(map(len, token_lists)) / max(1, len(rows))
-    lexical = {}
-    for (chunk, doc), tokens in zip(rows, token_lists):
-        counts, score = Counter(tokens), 0.0
-        for token in q:
-            if not counts[token]:
-                continue
-            inverse = math.log(1 + (len(rows) - frequencies[token] + .5) / (frequencies[token] + .5))
-            score += inverse * counts[token] * 2.2 / (counts[token] + 1.2 * (.25 + .75 * len(tokens) / max(average, 1)))
-            if token in doc.title:
-                score += 1.5
-        if score > 0:
-            lexical[chunk.id] = score
-    lex_rank = sorted(lexical, key=lexical.get, reverse=True)
-    semantic = {}
-    if _model is not None:
-        with _model_lock:
-            vector = next(iter(_model.query_embed(query)))
-        import numpy as np
-        for chunk, _ in rows:
-            if chunk.embedding is not None:
-                other = np.asarray(chunk.embedding)
-                similarity = float(np.dot(vector, other) / (np.linalg.norm(vector) * np.linalg.norm(other) + 1e-9))
-                if similarity >= .60:
-                    semantic[chunk.id] = similarity
-    sem_rank = sorted(semantic, key=semantic.get, reverse=True)
-    candidates = set(lex_rank[:20]) | set(sem_rank[:12])
-    if not candidates:
-        return []
-    scores = {key: (1 / (60 + lex_rank.index(key)) if key in lex_rank else 0) +
-                   (1 / (60 + sem_rank.index(key)) if key in sem_rank else 0) for key in candidates}
-    by_id = {c.id: (c, d) for c, d in rows}
-    result = []
-    for key in sorted(scores, key=scores.get, reverse=True)[:limit]:
-        chunk, doc = by_id[key]
-        result.append({'chunk_id': chunk.id, 'document_id': doc.id, 'title': doc.title, 'category': doc.category,
-                       'text': chunk.text, 'version': doc.version, 'is_demo': doc.is_demo,
-                       'source_url': doc.source_url, 'knowledge_type':doc.knowledge_type,'exam_type':doc.exam_type,'exam_year':doc.exam_year,'region':doc.region,
-                       'score': round(scores[key], 5)})
-    return result
+    from .search import search_documents
+    return search_documents(db,query,public_only,tenant_id,limit,context)
 
 def historical_commercial_text(source):
     from .commercial import reference_is_commercial

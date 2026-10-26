@@ -23,7 +23,13 @@ import {
   useToast,
 } from "./ui";
 
-export function MessageBubble({ message }: { message: any }) {
+export function MessageBubble({
+  message,
+  onFeedback,
+}: {
+  message: any;
+  onFeedback?: (id: string, rating: string) => void;
+}) {
   const user = message.role === "user";
   return (
     <div className={"message " + (user ? "from-user" : "from-assistant")}>
@@ -72,6 +78,27 @@ export function MessageBubble({ message }: { message: any }) {
         {message.state === "failed" && (
           <small className="red-text">回答未完成，请重试或转人工。</small>
         )}
+        {onFeedback &&
+          message.role === "assistant" &&
+          message.state === "completed" && (
+            <div className="actions feedback-actions" aria-label="回答评价">
+              <button
+                className="button secondary small"
+                aria-pressed={message.feedback === "up"}
+                onClick={() => onFeedback(message.id, "up")}
+              >
+                有帮助
+              </button>
+              <button
+                className="button secondary small"
+                aria-pressed={message.feedback === "down"}
+                onClick={() => onFeedback(message.id, "down")}
+              >
+                需改进
+              </button>
+              {message.feedback && <small role="status">已收到评价</small>}
+            </div>
+          )}
       </div>
     </div>
   );
@@ -88,6 +115,8 @@ export function Conversations({
   const pages = usePaged("/admin/conversations", includeDemo, version),
     list = pages.resource;
   const owners = useResource<any[]>("/admin/filter-options", version);
+  const receptionStaff = useResource<any[]>("/admin/reception-staff", version);
+  const [transferTo, setTransferTo] = useState("");
   const [params] = useSearchParams();
   const [selected, setSelected] = useState(params.get("conversation_id") || ""),
     [detail, setDetail] = useState<any>(null),
@@ -103,6 +132,13 @@ export function Conversations({
       detail.assigned_to_id === user?.id ||
       user?.role === "admin");
   useEffect(() => {
+    const timer = setInterval(() => {
+      list.reload();
+      receptionStaff.reload();
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
     if (!selected && rows.length) setSelected(rows[0].id);
   }, [list.data, selected]);
   useEffect(() => {
@@ -114,6 +150,18 @@ export function Conversations({
           if (active) {
             setDetail(v);
             setError("");
+            const last = v.messages?.at(-1);
+            if (
+              last &&
+              v.unread_count &&
+              document.visibilityState === "visible"
+            )
+              api(`/admin/conversations/${selected}/read`, {
+                method: "POST",
+                body: JSON.stringify({ message_id: last.id }),
+              })
+                .then(() => list.reload())
+                .catch(() => {});
           }
         })
         .catch((e) => {
@@ -207,6 +255,9 @@ export function Conversations({
               >
                 <div className="row-between">
                   <strong>{v.visitor_name}</strong>
+                  {v.unread_count > 0 && (
+                    <Badge tone="amber">{v.unread_count} 未读</Badge>
+                  )}
                   <small>{date(v.updated_at)}</small>
                 </div>
                 <p>{v.last_message}</p>
@@ -256,10 +307,45 @@ export function Conversations({
                     {detail.is_demo && <Badge tone="muted">演示</Badge>}
                   </h2>
                   <p>
-                    {detail.source_page} · {statusLabel[detail.status]}
+                    {detail.source_page} · {statusLabel[detail.status]} ·
+                    接待人：{detail.assigned_name}
+                    {detail.waiting_since &&
+                      ` · 排队起始 ${date(detail.waiting_since, true)}`}
                   </p>
                 </div>
                 <div className="actions">
+                  {detail.status === "human" && canHandle && (
+                    <>
+                      <select
+                        aria-label="转交接待人"
+                        value={transferTo}
+                        onChange={(e) => setTransferTo(e.target.value)}
+                      >
+                        <option value="">选择转交接待人</option>
+                        {receptionStaff.data
+                          ?.filter((s) => s.id !== detail.assigned_to_id)
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} ·{" "}
+                              {s.status === "online"
+                                ? "在线"
+                                : s.status === "away"
+                                  ? "暂离"
+                                  : "离线"}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        className="button secondary small"
+                        disabled={busy || !transferTo}
+                        onClick={() =>
+                          action("transfer", { assigned_to_id: transferTo })
+                        }
+                      >
+                        转交
+                      </button>
+                    </>
+                  )}
                   {detail.status !== "human" && canHandle && (
                     <button
                       className="button small"

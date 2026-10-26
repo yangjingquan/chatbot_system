@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   BookOpen,
   Search,
@@ -76,6 +77,14 @@ export function Knowledge({
     [results, setResults] = useState<any>(null),
     [testBusy, setTestBusy] = useState(false);
   const docs = r.data?.items || [];
+  const [params] = useSearchParams();
+  useEffect(() => {
+    const id = params.get("document_id");
+    if (id)
+      api("/admin/documents/" + id)
+        .then(replace)
+        .catch((e) => setError(e.message));
+  }, [params]);
   const locked = edit?.draft_status === "submitted";
   function replace(result: any) {
     setEdit(result);
@@ -192,9 +201,9 @@ export function Knowledge({
     const body = new FormData();
     body.append("file", file);
     try {
-      replace(await api("/admin/documents/upload", { method: "POST", body }));
+      await api("/admin/document-jobs/upload", { method: "POST", body });
       onChange();
-      toast("文件已解析为草稿，请检查内容及适用范围");
+      toast("文件已排队解析，请到“文档处理任务”查看进度并打开生成的草稿");
     } catch (e: any) {
       toast(e.message, true);
     } finally {
@@ -446,7 +455,11 @@ export function Knowledge({
                 已提交审核，当前草稿已锁定。需要修改时由管理员退回。
               </p>
             )}
-            {edit.knowledge_type === "course" && <p className="review-notice">课程文件作为参考存档。机器人的课程、价格、课时和开班安排统一读取“课程与班次”，请在那里维护当前业务信息。</p>}
+            {edit.knowledge_type === "course" && (
+              <p className="review-notice">
+                课程文件作为参考存档。机器人的课程、价格、课时和开班安排统一读取“课程与班次”，请在那里维护当前业务信息。
+              </p>
+            )}
             {edit.review_note && (
               <p className="review-notice">审核意见：{edit.review_note}</p>
             )}
@@ -686,6 +699,27 @@ export function Knowledge({
                     <History size={15} />
                     版本历史
                   </button>
+                  {edit.status === "published" && can("knowledge.write") && (
+                    <button
+                      className="button secondary small"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await api("/admin/document-jobs/reindex/" + edit.id, {
+                            method: "POST",
+                          });
+                          toast("重建任务已排队，请到文档处理任务查看进度");
+                        } catch (e: any) {
+                          toast(e.message, true);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      重建向量索引
+                    </button>
+                  )}
                 </div>
                 {dirty && (
                   <p className="footnote">保存草稿后才能提交审核或发布。</p>

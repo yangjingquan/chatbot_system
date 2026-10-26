@@ -118,6 +118,8 @@ def apply_published(db,doc,revision,user,note=''):
     doc.version=revision.number;doc.status='published';doc.edit_sequence+=1;doc.updated_at=now()
     revision.status='published';revision.reviewer_name=user.name;revision.review_note=note;revision.updated_at=now()
     ingest_document(db,doc)
+    from .jobs import enqueue_index
+    enqueue_index(db,doc)
 
 def create_document(db,data,user,status='draft'):
     if status!='draft':check_permission(user,'knowledge.publish')

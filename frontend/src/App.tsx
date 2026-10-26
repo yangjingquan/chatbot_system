@@ -37,18 +37,24 @@ import { Staff } from "./Staff";
 import { Courses } from "./Courses";
 import { Students } from "./Students";
 import { Todos } from "./Todos";
+import { ReceptionStatus, Trials } from "./Reception";
+import { Quality } from "./Quality";
+import { DocumentJobs } from "./DocumentJobs";
 
 const navigation = [
   ["/", "工作台", LayoutDashboard, "analytics.read"],
   ["/knowledge", "企业知识库", BookOpen, "knowledge.read"],
+  ["/document-jobs", "文档处理任务", RefreshCw, "knowledge.read"],
   ["/courses", "课程与班次", GraduationCap, "courses.read"],
   ["/conversations", "咨询会话", MessagesSquare, "conversations.read"],
+  ["/trials", "试听预约", GraduationCap, "conversations.read"],
   ["/leads", "咨询线索", Users, "leads.read"],
   ["/customers", "学员档案", ContactRound, "students.read"],
   ["/todos", "跟进待办", Users, "leads.read"],
   ["/analytics", "数据分析", ChartNoAxesCombined, "analytics.read"],
   ["/staff", "员工与权限", ShieldCheck, "staff.manage"],
   ["/robot", "机器人配置", Bot, "settings.write"],
+  ["/quality", "质量与用量", ChartNoAxesCombined, "settings.write"],
   ["/settings", "企业设置", Settings, "settings.write"],
 ] as const;
 
@@ -274,6 +280,7 @@ export function App() {
               </strong>
             </div>
             <div className="topbar-actions">
+              {can("conversations.handle") && <ReceptionStatus />}
               <span className="local-label">
                 <span className="status-dot green" />
                 本地运行
@@ -315,6 +322,24 @@ export function App() {
               </label>
             </div>
             <Routes>
+              <Route
+                path="/document-jobs"
+                element={guard(
+                  "knowledge.read",
+                  <DocumentJobs version={version} />,
+                )}
+              />
+              <Route
+                path="/quality"
+                element={guard("settings.write", <Quality version={version} />)}
+              />
+              <Route
+                path="/trials"
+                element={guard(
+                  "conversations.read",
+                  <Trials includeDemo={includeDemo} version={version} />,
+                )}
+              />
               <Route
                 path="/courses"
                 element={guard("courses.read", <Courses version={version} />)}
@@ -399,7 +424,7 @@ export function App() {
           </main>
           <footer className="workspace-footer">
             <span>知行客服 · 每一次回答，都有据可循</span>
-            <span>本地开发版 v0.3</span>
+            <span>本地开发版 v0.4</span>
           </footer>
         </div>
       </div>

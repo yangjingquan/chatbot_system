@@ -1,6 +1,7 @@
 import json
 import re
 import secrets
+import time
 from urllib.parse import urlsplit
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -26,6 +27,9 @@ def event(kind, data):
 
 def public_message_data(db, message, context=None):
     result=message_data(message)
+    from .models import AnswerFeedback
+    feedback=db.get(AnswerFeedback,message.id) if message.role=='assistant' else None
+    result['feedback']=feedback.rating if feedback else None
     if message.role=='assistant' and message.sources:
         for source in message.sources:
             if source.get('kind')=='catalog':
@@ -140,6 +144,7 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
         return StreamingResponse(iter([event('done',{'status':conv.status,'waiting':True})]),media_type='text/event-stream')
     if re.search(r'转人工|人工客服|真人客服|找人工',data.content):
         conv.status='waiting'
+        conv.waiting_since=conv.waiting_since or now()
         db.commit()
         return StreamingResponse(iter([event('delta',{'text':'已为您登记人工接待请求。可以继续补充需求，工作人员接管后会在这里回复。'}),event('done',{'status':'waiting','waiting':True})]),media_type='text/event-stream')
     previous=db.scalars(select(Message).where(Message.conversation_id==conv.id,Message.id!=user_message.id).order_by(Message.created_at.desc()).limit(6)).all()
@@ -160,12 +165,19 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
     answer=Message(conversation_id=conv.id,role='assistant',content='',reply_to=user_message.id,
                    mode=mode,state='pending',sources=sources)
     db.add(answer)
+    db.flush()
+    pricing=db.get(Company,conv.tenant_id).config.get('_budget',{}).copy()
+    if mode=='deepseek':
+        from .quality import record_usage
+        record_usage(db,answer,settings().deepseek_model,0,'',pricing)
     db.commit()
 
     def stream():
         text=''
         complete=False
         usage={}
+        started=time.monotonic()
+        error_type='interrupted'
         try:
             yield event('meta',{'mode':mode,'sources':sources})
             if mode=='unknown':
@@ -199,15 +211,24 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
                     yield event('delta',{'text':piece})
                 if not text.strip(): raise ValueError('empty model output')
             complete=True
+            error_type=''
             yield event('done',{'id':answer.id,'status':conv.status})
         except GeneratorExit:
             raise
-        except Exception:
-            yield event('error',{'message':'模型服务暂时未能完成回答，请稍后重试或转人工。可在下方查看已检索资料。'})
+        except Exception as exc:
+            from .quality import classify_error
+            error_type,error_message=classify_error(exc)
+            yield event('error',{'message':error_message,'type':error_type})
         finally:
             answer.content=text
             answer.usage=usage
             if answer.state!='cancelled': answer.state='completed' if complete else 'failed'
+            if mode=='deepseek':
+                from .quality import record_usage
+                record_usage(db,answer,settings().deepseek_model,int((time.monotonic()-started)*1000),error_type,pricing)
+            elif mode=='unknown' and complete:
+                from .quality import add_gap
+                add_gap(db,answer,'unknown_answer')
             conv.updated_at=now()
             db.commit()
     return StreamingResponse(stream(),media_type='text/event-stream',headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
@@ -246,6 +267,10 @@ def contact(session_id: str, data: ContactInput, request: Request, db: Session =
 @router.post('/sessions/{session_id}/handoff')
 def handoff(session_id: str, request: Request, db: Session = Depends(get_db)):
     conv=visitor(request,session_id,db)
-    if conv.status!='human': conv.status='waiting'
+    conv=db.scalar(select(Conversation).where(Conversation.id==conv.id).with_for_update().execution_options(populate_existing=True))
+    if conv.status=='closed':raise HTTPException(409,'咨询已结束，请新建咨询')
+    if conv.status!='human':
+        conv.status='waiting'
+        conv.waiting_since=conv.waiting_since or now()
     db.commit()
     return {'status':conv.status}
