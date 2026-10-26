@@ -19,7 +19,8 @@ def test_withdrawn_knowledge_not_in_history_replay_or_model_context(admin,monkey
     client_id=str(uuid.uuid4())
     first=send(admin,sid,headers,'星河专属课程',client_id)
     assert 'TEST-HISTORY-924' in first.text
-    admin.patch('/api/admin/documents/'+doc['id'],json={'visibility':'internal'})
+    draft=admin.patch('/api/admin/documents/'+doc['id'],json={'visibility':'internal','expected_sequence':doc['edit_sequence']}).json()
+    admin.post('/api/admin/documents/'+doc['id']+'/publish',json={'expected_sequence':draft['edit_sequence']})
     history=admin.get(f'/api/widget/sessions/{sid}',headers=headers).json()
     answer=next(m for m in history['messages'] if m['role']=='assistant')
     assert 'TEST-HISTORY-924' not in answer['content']
@@ -45,7 +46,7 @@ def test_contact_withdrawal_persisted_and_manual_level_not_accidentally_locked(a
     send(admin,sid,headers,'想报公安联考班，预算2000元，下个月考试，想预约试听和报价')
     lead=admin.post(f'/api/widget/sessions/{sid}/contact',headers=headers,json={'name':'回归访客','contact':'test@example.invalid','consent':True}).json()
     detail=admin.get('/api/admin/leads/'+lead['id']).json()
-    changed=admin.patch('/api/admin/leads/'+lead['id'],json={'owner':'顾问测试','level':detail['level']}).json()
+    changed=admin.patch('/api/admin/leads/'+lead['id'],json={'stage':'跟进中','level':detail['level']}).json()
     assert changed['manual_level'] is False
     send(admin,sid,headers,'我不打算报名了，不用联系我')
     detail=admin.get('/api/admin/leads/'+lead['id']).json()
@@ -59,6 +60,38 @@ def test_can_restore_automatic_level(admin):
     result=admin.patch('/api/admin/leads/'+lead['id'],json={'automatic_level':True}).json()
     assert result['manual_level'] is False
     assert result['level']!='高意向'
+
+def test_contact_can_only_resume_after_explicit_new_consent(admin):
+    sid,headers=new_session(admin)
+    payload={'name':'重新授权','contact':'test@example.invalid','consent':True}
+    lead=admin.post(f'/api/widget/sessions/{sid}/contact',headers=headers,json=payload).json()
+    send(admin,sid,headers,'不用联系我，我不打算报名了')
+    send(admin,sid,headers,'谢谢')
+    assert admin.get('/api/admin/leads/'+lead['id']).json()['contact_allowed'] is False
+    admin.post(f'/api/widget/sessions/{sid}/contact',headers=headers,json=payload)
+    send(admin,sid,headers,'我现在想报国考课程')
+    detail=admin.get('/api/admin/leads/'+lead['id']).json()
+    assert detail['contact_allowed'] is True
+    assert '国考' in detail['tags']
+
+def test_existing_summaries_upgrade_without_overwriting_manual_level(admin):
+    from app.db import SessionLocal
+    from app.models import Conversation
+    from app.chat import backfill_analysis
+    sid,headers=new_session(admin)
+    lead=admin.post(f'/api/widget/sessions/{sid}/contact',headers=headers,json={'name':'旧数据升级','contact':'test@example.invalid','consent':True}).json()
+    send(admin,sid,headers,'不打算报名了')
+    admin.patch('/api/admin/leads/'+lead['id'],json={'level':'高意向'})
+    with SessionLocal() as db:
+        conv=db.get(Conversation,sid)
+        conv.analysis={'rule_version':'training-v2','level':'高意向'}
+        db.commit()
+        backfill_analysis(db)
+        db.commit()
+    result=admin.get('/api/admin/conversations/'+sid).json()
+    assert result['analysis']['purchase_state']=='declined'
+    assert result['lead']['level']=='高意向'
+    assert result['lead']['manual_level'] is True
 
 def test_lead_inherits_preexisting_demo_marker(admin):
     sid,headers=new_session(admin)

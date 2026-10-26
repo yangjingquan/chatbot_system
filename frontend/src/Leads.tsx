@@ -11,6 +11,7 @@ import {
   LockKeyhole,
 } from "lucide-react";
 import { api, date, useResource } from "./api";
+import { useAccess } from "./auth";
 import {
   Badge,
   Empty,
@@ -41,6 +42,12 @@ export function Leads({
   customers?: boolean;
 }) {
   const originalLevel = useRef("");
+  const originalOwner = useRef<string | null>(null);
+  const { can } = useAccess();
+  const staff = useResource<any[]>(
+    "/admin/staff/options",
+    can("leads.assign") ? version : -1,
+  );
   const r = useResource<any[]>(
       `/admin/leads?include_demo=${includeDemo}`,
       version,
@@ -69,6 +76,7 @@ export function Leads({
       const result = await api("/admin/leads/" + id);
       setDetail(result);
       originalLevel.current = result.level;
+      originalOwner.current = result.owner_id;
       setNote("");
     } catch (e: any) {
       toast(e.message, true);
@@ -81,7 +89,9 @@ export function Leads({
         await api("/admin/leads/" + detail.id, {
           method: "PATCH",
           body: JSON.stringify({
-            owner: detail.owner,
+            ...(can("leads.assign") && detail.owner_id !== originalOwner.current
+              ? { owner_id: detail.owner_id || null }
+              : {}),
             stage: detail.stage,
             level:
               detail.level !== originalLevel.current ? detail.level : undefined,
@@ -91,6 +101,7 @@ export function Leads({
       );
       r.reload();
       originalLevel.current = detail.level;
+      originalOwner.current = detail.owner_id;
       toast("线索跟进状态已更新");
     } catch (e: any) {
       toast(e.message, true);
@@ -142,7 +153,8 @@ export function Leads({
             : "把需求、对话证据和后续行动放在一起。"
         }
         actions={
-          !customers && (
+          !customers &&
+          can("leads.export") && (
             <a
               className="button secondary"
               href={`/api/admin/leads-export?include_demo=${includeDemo}`}
@@ -164,7 +176,7 @@ export function Leads({
         </span>
         <span>
           <span className="status-dot amber" />
-          待分配 {(r.data || []).filter((l) => l.owner === "未分配").length}
+          待分配 {(r.data || []).filter((l) => !l.owner_id).length}
         </span>
         <small>联系方式仅用于已说明的咨询用途；未核验不等于真实身份。</small>
       </div>
@@ -375,13 +387,38 @@ export function Leads({
             </div>
             <label>
               负责人
-              <input
-                value={detail.owner}
-                onChange={(e) =>
-                  setDetail({ ...detail, owner: e.target.value })
-                }
-                maxLength={80}
-              />
+              {can("leads.assign") ? (
+                <select
+                  value={detail.owner_id || ""}
+                  disabled={staff.loading || Boolean(staff.error)}
+                  onChange={(e) =>
+                    setDetail({ ...detail, owner_id: e.target.value || null })
+                  }
+                >
+                  <option value="">
+                    未分配
+                    {!detail.owner_id && detail.owner !== "未分配"
+                      ? `（历史归属：${detail.owner}）`
+                      : ""}
+                  </option>
+                  {detail.owner_id &&
+                    !staff.data?.some((m) => m.id === detail.owner_id) && (
+                      <option value={detail.owner_id}>
+                        {detail.owner}（已停用或岗位已变更）
+                      </option>
+                    )}
+                  {staff.data?.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input readOnly value={detail.owner} />
+              )}
+              {staff.error && (
+                <ErrorBox text={staff.error} retry={staff.reload} />
+              )}
             </label>
             <label className="checkbox-line">
               <input

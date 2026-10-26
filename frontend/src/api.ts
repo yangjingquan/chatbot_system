@@ -34,6 +34,11 @@ export function useResource<T = any>(path: string, version: number = 0) {
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
   useEffect(() => {
+    if (version < 0) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     setError("");
@@ -59,7 +64,11 @@ export const date = (value: string, full = false) =>
   }).format(new Date(value));
 export const statusLabel: Record<string, string> = {
   published: "已发布",
-  draft: "待审核",
+  draft: "草稿",
+  submitted: "待审核",
+  superseded: "历史版本",
+  expired: "已过期",
+  scheduled: "未生效",
   archived: "已下架",
   public: "对外公开",
   internal: "内部资料",

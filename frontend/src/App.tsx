@@ -1,5 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { NavLink, Route, Routes, Link, useLocation } from "react-router-dom";
+import {
+  NavLink,
+  Route,
+  Routes,
+  Link,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import {
   GraduationCap,
   LayoutDashboard,
@@ -25,16 +32,19 @@ import { Knowledge } from "./Knowledge";
 import { Conversations } from "./Conversations";
 import { Leads } from "./Leads";
 import { Configuration } from "./Configuration";
+import { AuthProvider } from "./auth";
+import { Staff } from "./Staff";
 
 const navigation = [
-  ["/", "工作台", LayoutDashboard],
-  ["/knowledge", "企业知识库", BookOpen],
-  ["/conversations", "咨询会话", MessagesSquare],
-  ["/leads", "咨询线索", Users],
-  ["/customers", "客户档案", ContactRound],
-  ["/analytics", "数据分析", ChartNoAxesCombined],
-  ["/robot", "机器人配置", Bot],
-  ["/settings", "企业设置", Settings],
+  ["/", "工作台", LayoutDashboard, "analytics.read"],
+  ["/knowledge", "企业知识库", BookOpen, "knowledge.read"],
+  ["/conversations", "咨询会话", MessagesSquare, "conversations.read"],
+  ["/leads", "咨询线索", Users, "leads.read"],
+  ["/customers", "客户档案", ContactRound, "leads.read"],
+  ["/analytics", "数据分析", ChartNoAxesCombined, "analytics.read"],
+  ["/staff", "员工与权限", ShieldCheck, "staff.manage"],
+  ["/robot", "机器人配置", Bot, "settings.write"],
+  ["/settings", "企业设置", Settings, "settings.write"],
 ] as const;
 
 function Login({ onLogin }: { onLogin: (user: any) => void }) {
@@ -95,7 +105,7 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
           <h2>登录工作台</h2>
           <p>欢迎回来，继续处理您的咨询与学员需求。</p>
           <label>
-            管理员邮箱
+            员工邮箱
             <input
               type="email"
               autoComplete="username"
@@ -155,202 +165,232 @@ export function App() {
   const refresh = () => setVersion((v) => v + 1);
   if (checking) return <Loading />;
   if (!user) return <Login onLogin={setUser} />;
+  const can = (permission: string) => user.permissions?.includes(permission);
+  const home = can("analytics.read") ? "/" : "/knowledge";
+  const guard = (permission: string, page: React.ReactNode) =>
+    can(permission) ? page : <Navigate to={home} replace />;
   return (
-    <div className="app-shell">
-      <aside className={"sidebar " + (mobile ? "open" : "")}>
-        <Link to="/" className="brand">
-          <div className="brand-symbol">
-            <GraduationCap size={24} />
-          </div>
-          <div>
-            知行客服<small>培训机构工作台</small>
-          </div>
-        </Link>
-        <button
-          className="icon-button mobile-close"
-          aria-label="关闭导航"
-          onClick={() => setMobile(false)}
-        >
-          <X size={20} />
-        </button>
-        <div className="company-switch">
-          <span className="company-avatar">知</span>
-          <div>
-            <strong>{config.data?.company_name || "知行公考"}</strong>
-            <small>单企业 · 本地环境</small>
-          </div>
-          <ChevronRight size={14} />
-        </div>
-        <nav aria-label="主导航">
-          {navigation.map(([to, label, Icon]) => (
-            <NavLink key={to} to={to} end={to === "/"}>
-              <Icon size={19} />
-              <span>{label}</span>
-              {to === "/robot" && <span className="nav-new">AI</span>}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="service-status">
-            <span
-              className={
-                "status-dot " +
-                (config.data?.model_configured ? "green" : "amber")
-              }
-            />
-            <div>
-              <strong>
-                {config.data?.model_configured
-                  ? "DeepSeek 已配置"
-                  : "资料摘录模式"}
-              </strong>
-              <small>
-                {config.data?.model_configured
-                  ? "服务端安全接入"
-                  : "接入 Key 后启用智能回答"}
-              </small>
+    <AuthProvider user={user}>
+      <div className="app-shell">
+        <aside className={"sidebar " + (mobile ? "open" : "")}>
+          <Link to="/" className="brand">
+            <div className="brand-symbol">
+              <GraduationCap size={24} />
             </div>
-          </div>
+            <div>
+              知行客服<small>培训机构工作台</small>
+            </div>
+          </Link>
           <button
-            className="user-button"
-            onClick={async () => {
-              await api("/auth/logout", { method: "POST" });
-              setUser(null);
-            }}
+            className="icon-button mobile-close"
+            aria-label="关闭导航"
+            onClick={() => setMobile(false)}
           >
-            <span className="avatar">管</span>
-            <div>
-              <strong>{user.name}</strong>
-              <small>退出登录</small>
-            </div>
-            <LogOut size={16} />
+            <X size={20} />
           </button>
-        </div>
-      </aside>
-      {mobile && (
-        <button
-          className="nav-backdrop"
-          aria-label="关闭导航"
-          onClick={() => setMobile(false)}
-        />
-      )}
-      <div className="main-shell">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <button
-              className="icon-button mobile-menu"
-              aria-label="打开导航"
-              onClick={() => setMobile(true)}
-            >
-              <Menu size={20} />
-            </button>
-            <span>运营空间</span>
-            <ChevronRight size={14} />
-            <strong>
-              {navigation.find((n) => n[0] === location.pathname)?.[1] ||
-                "工作台"}
-            </strong>
-          </div>
-          <div className="topbar-actions">
-            <span className="local-label">
-              <span className="status-dot green" />
-              本地运行
-            </span>
-            <a
-              href="/demo"
-              target="_blank"
-              rel="noreferrer"
-              className="button secondary small"
-            >
-              <ExternalLink size={15} />
-              官网演示
-            </a>
-            <button
-              aria-label="刷新数据"
-              className="icon-button"
-              onClick={refresh}
-            >
-              <RefreshCw size={18} />
-            </button>
-          </div>
-        </header>
-        <main className="workspace">
-          <div className="environment-banner">
+          <div className="company-switch">
+            <span className="company-avatar">知</span>
             <div>
-              <span className="sample-square" />
-              演示环境
-              <span className="banner-description">
-                机构、课程价格及种子记录为虚构资料；考试政策以官方公告为准。
-              </span>
+              <strong>{config.data?.company_name || "知行公考"}</strong>
+              <small>单企业 · 本地环境</small>
             </div>
-            <label className="toggle-label">
-              <input
-                type="checkbox"
-                checked={includeDemo}
-                onChange={(e) => setIncludeDemo(e.target.checked)}
-              />
-              包含演示记录
-            </label>
+            <ChevronRight size={14} />
           </div>
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <Dashboard includeDemo={includeDemo} version={version} />
-              }
-            />
-            <Route
-              path="/knowledge"
-              element={<Knowledge version={version} onChange={refresh} />}
-            />
-            <Route
-              path="/conversations"
-              element={
-                <Conversations includeDemo={includeDemo} version={version} />
-              }
-            />
-            <Route
-              path="/leads"
-              element={<Leads includeDemo={includeDemo} version={version} />}
-            />
-            <Route
-              path="/customers"
-              element={
-                <Leads includeDemo={includeDemo} version={version} customers />
-              }
-            />
-            <Route
-              path="/analytics"
-              element={
-                <Analytics includeDemo={includeDemo} version={version} />
-              }
-            />
-            <Route
-              path="/robot"
-              element={
-                <Configuration robot version={version} onChange={refresh} />
-              }
-            />
-            <Route
-              path="/settings"
-              element={<Configuration version={version} onChange={refresh} />}
-            />
-            <Route
-              path="*"
-              element={
-                <div className="empty">
-                  <h2>页面不存在</h2>
-                  <Link to="/">返回工作台</Link>
-                </div>
-              }
-            />
-          </Routes>
-        </main>
-        <footer className="workspace-footer">
-          <span>知行客服 · 每一次回答，都有据可循</span>
-          <span>本地开发版 v0.1</span>
-        </footer>
+          <nav aria-label="主导航">
+            {navigation
+              .filter((n) => can(n[3]))
+              .map(([to, label, Icon]) => (
+                <NavLink key={to} to={to} end={to === "/"}>
+                  <Icon size={19} />
+                  <span>{label}</span>
+                  {to === "/robot" && <span className="nav-new">AI</span>}
+                </NavLink>
+              ))}
+          </nav>
+          <div className="sidebar-bottom">
+            <div className="service-status">
+              <span
+                className={
+                  "status-dot " +
+                  (config.data?.model_configured ? "green" : "amber")
+                }
+              />
+              <div>
+                <strong>
+                  {config.data?.model_configured
+                    ? "DeepSeek 已配置"
+                    : "资料摘录模式"}
+                </strong>
+                <small>
+                  {config.data?.model_configured
+                    ? "服务端安全接入"
+                    : "接入 Key 后启用智能回答"}
+                </small>
+              </div>
+            </div>
+            <button
+              className="user-button"
+              onClick={async () => {
+                await api("/auth/logout", { method: "POST" });
+                setUser(null);
+              }}
+            >
+              <span className="avatar">{user.name.slice(0, 1)}</span>
+              <div>
+                <strong>{user.name}</strong>
+                <small>{user.role_label} · 退出登录</small>
+              </div>
+              <LogOut size={16} />
+            </button>
+          </div>
+        </aside>
+        {mobile && (
+          <button
+            className="nav-backdrop"
+            aria-label="关闭导航"
+            onClick={() => setMobile(false)}
+          />
+        )}
+        <div className="main-shell">
+          <header className="topbar">
+            <div className="breadcrumb">
+              <button
+                className="icon-button mobile-menu"
+                aria-label="打开导航"
+                onClick={() => setMobile(true)}
+              >
+                <Menu size={20} />
+              </button>
+              <span>运营空间</span>
+              <ChevronRight size={14} />
+              <strong>
+                {navigation.find((n) => n[0] === location.pathname)?.[1] ||
+                  "工作台"}
+              </strong>
+            </div>
+            <div className="topbar-actions">
+              <span className="local-label">
+                <span className="status-dot green" />
+                本地运行
+              </span>
+              <a
+                href="/demo"
+                target="_blank"
+                rel="noreferrer"
+                className="button secondary small"
+              >
+                <ExternalLink size={15} />
+                官网演示
+              </a>
+              <button
+                aria-label="刷新数据"
+                className="icon-button"
+                onClick={refresh}
+              >
+                <RefreshCw size={18} />
+              </button>
+            </div>
+          </header>
+          <main className="workspace">
+            <div className="environment-banner">
+              <div>
+                <span className="sample-square" />
+                演示环境
+                <span className="banner-description">
+                  机构、课程价格及种子记录为虚构资料；考试政策以官方公告为准。
+                </span>
+              </div>
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={includeDemo}
+                  onChange={(e) => setIncludeDemo(e.target.checked)}
+                />
+                包含演示记录
+              </label>
+            </div>
+            <Routes>
+              <Route
+                path="/"
+                element={guard(
+                  "analytics.read",
+                  <Dashboard includeDemo={includeDemo} version={version} />,
+                )}
+              />
+              <Route
+                path="/knowledge"
+                element={guard(
+                  "knowledge.read",
+                  <Knowledge version={version} onChange={refresh} />,
+                )}
+              />
+              <Route
+                path="/conversations"
+                element={guard(
+                  "conversations.read",
+                  <Conversations includeDemo={includeDemo} version={version} />,
+                )}
+              />
+              <Route
+                path="/leads"
+                element={guard(
+                  "leads.read",
+                  <Leads includeDemo={includeDemo} version={version} />,
+                )}
+              />
+              <Route
+                path="/customers"
+                element={guard(
+                  "leads.read",
+                  <Leads
+                    includeDemo={includeDemo}
+                    version={version}
+                    customers
+                  />,
+                )}
+              />
+              <Route
+                path="/analytics"
+                element={guard(
+                  "analytics.read",
+                  <Analytics includeDemo={includeDemo} version={version} />,
+                )}
+              />
+              <Route
+                path="/robot"
+                element={guard(
+                  "settings.write",
+                  <Configuration robot version={version} onChange={refresh} />,
+                )}
+              />
+              <Route
+                path="/settings"
+                element={guard(
+                  "settings.write",
+                  <Configuration version={version} onChange={refresh} />,
+                )}
+              />
+              <Route
+                path="/staff"
+                element={guard("staff.manage", <Staff version={version} />)}
+              />
+              <Route
+                path="*"
+                element={
+                  <div className="empty">
+                    <h2>页面不存在</h2>
+                    <Link to="/">返回工作台</Link>
+                  </div>
+                }
+              />
+            </Routes>
+          </main>
+          <footer className="workspace-footer">
+            <span>知行客服 · 每一次回答，都有据可循</span>
+            <span>本地开发版 v0.2</span>
+          </footer>
+        </div>
       </div>
-    </div>
+    </AuthProvider>
   );
 }

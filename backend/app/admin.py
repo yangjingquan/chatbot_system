@@ -13,36 +13,28 @@ from .db import get_db
 from .models import Admin, AdminSession, Audit, Company, Conversation, Document, Chunk, Lead, FollowUp, Message, TENANT, now
 from .security import admin_user, check_origin, digest, passwords, limit
 from .knowledge import ingest_document, retrieve, parse_file, retrieval_status
+from .permissions import require, check_permission, user_data, scoped_object, scope_leads, scope_conversations, has_permission
 
 router = APIRouter()
 
 def record(db, user, action, target=''):
     db.add(Audit(actor=user.name, tenant_id=user.tenant_id, action=action, target=target[:240]))
 
-def owned(db, model, key, tenant_id=TENANT):
-    item = db.get(model, key)
-    if not item or item.tenant_id != tenant_id:
-        raise HTTPException(404, '记录不存在')
-    return item
+def owned(db, model, key, user):
+    return scoped_object(db,model,key,user)
 
 def message_data(m):
     return {'id':m.id, 'role':m.role, 'content':m.content, 'sources':m.sources, 'mode':m.mode,
             'state':m.state, 'created_at':m.created_at.isoformat()}
 
-def document_data(db, d, full=True):
-    return {'id':d.id, 'title':d.title, 'category':d.category, 'status':d.status, 'visibility':d.visibility,
-            'content':d.content if full else d.content[:100], 'source_url':d.source_url, 'is_demo':d.is_demo,
-            'version':d.version, 'chunks':db.scalar(select(func.count()).select_from(Chunk).where(Chunk.document_id == d.id)),
-            'updated_at':d.updated_at.isoformat()}
-
 def lead_data(l):
     return {k: (getattr(l,k).isoformat() if k.endswith('_at') else getattr(l,k)) for k in
-            ('id','conversation_id','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','manual_level','is_demo','created_at','updated_at')}
+            ('id','conversation_id','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','owner_id','manual_level','is_demo','created_at','updated_at')}
 
 def conversation_data(db, c, full=False):
     messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
     result = {'id':c.id, 'visitor_name':c.visitor_name, 'source_page':c.source_page, 'status':c.status,
-              'analysis':c.analysis, 'is_demo':c.is_demo, 'created_at':c.created_at.isoformat(), 'updated_at':c.updated_at.isoformat(),
+              'analysis':c.analysis, 'assigned_to_id':c.assigned_to_id, 'is_demo':c.is_demo, 'created_at':c.created_at.isoformat(), 'updated_at':c.updated_at.isoformat(),
               'last_message':messages[-1].content[:120] if messages else '', 'message_count':len(messages)}
     if full:
         result['messages'] = [message_data(m) for m in messages]
@@ -61,7 +53,7 @@ def login(data: Login, request: Request, response: Response, db: Session = Depen
     limit('login:' + (request.client.host if request.client else 'local'), 10, 300)
     user = db.scalar(select(Admin).where(Admin.email == data.email.strip().lower(), Admin.tenant_id == TENANT))
     valid = False
-    if user:
+    if user and user.is_active:
         try:
             valid = passwords.verify(data.password, user.password_hash)
         except Exception:
@@ -73,11 +65,11 @@ def login(data: Login, request: Request, response: Response, db: Session = Depen
     record(db,user,'登录后台')
     db.commit()
     response.set_cookie('admin_session',token,httponly=True,secure=settings().cookie_secure,samesite='lax',max_age=43200,path='/')
-    return {'name':user.name,'email':user.email}
+    return user_data(user)
 
 @router.get('/auth/me')
 def me(user: Admin = Depends(admin_user)):
-    return {'name':user.name,'email':user.email}
+    return user_data(user)
 
 @router.post('/auth/logout')
 def logout(request: Request, response: Response, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
@@ -87,7 +79,7 @@ def logout(request: Request, response: Response, user: Admin = Depends(admin_use
     return {'ok':True}
 
 @router.get('/admin/settings')
-def get_settings(user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
+def get_settings(user: Admin = Depends(require('settings.read')), db: Session = Depends(get_db)):
     config = db.get(Company,user.tenant_id).config
     return {**{k:v for k,v in config.items() if not k.startswith('_') and k != 'knowledge_seeded'},
             'model_configured': bool(settings().deepseek_api_key), 'model':settings().deepseek_model,
@@ -102,7 +94,7 @@ class ConfigPatch(BaseModel):
     suggested_questions: list[str] | None = Field(None,max_length=6)
 
 @router.patch('/admin/settings')
-def update_settings(data: ConfigPatch, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
+def update_settings(data: ConfigPatch, user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
     values = data.model_dump(exclude_none=True)
     if any(len(q) > 150 for q in values.get('suggested_questions',[])):
         raise HTTPException(422,'推荐问题不能超过 150 字')
@@ -112,88 +104,20 @@ def update_settings(data: ConfigPatch, user: Admin = Depends(admin_user), db: Se
     db.commit()
     return get_settings(user,db)
 
-@router.get('/admin/documents')
-def documents(q: str = '', user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    query = select(Document).where(Document.tenant_id == user.tenant_id)
-    if q:
-        query = query.where(Document.title.contains(q[:200]))
-    return [document_data(db,d,False) for d in db.scalars(query.order_by(Document.updated_at.desc()).limit(500))]
-
-class DocumentCreate(BaseModel):
-    title: str = Field(min_length=1,max_length=240)
-    content: str = Field(min_length=1,max_length=200000)
-    category: str = Field('未分类',max_length=100)
-    status: Literal['draft','published','archived'] = 'draft'
-    visibility: Literal['public','internal'] = 'public'
-
-@router.post('/admin/documents/upload')
-def upload(file: UploadFile = File(...), user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    from pathlib import Path
-    raw = file.file.read(5 * 1024 * 1024 + 1)
-    content = parse_file(file.filename or '', raw)
-    doc = Document(title=Path(file.filename or '上传资料').stem[:240], content=content, tenant_id=user.tenant_id, status='draft')
-    db.add(doc)
-    ingest_document(db,doc)
-    record(db,user,'上传知识（待审核）',doc.title)
-    db.commit()
-    return document_data(db,doc)
-
-@router.post('/admin/documents')
-def create_document(data: DocumentCreate, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    doc = Document(**data.model_dump(),tenant_id=user.tenant_id)
-    db.add(doc)
-    ingest_document(db,doc)
-    record(db,user,'创建知识',doc.title)
-    db.commit()
-    return document_data(db,doc)
-
-@router.get('/admin/documents/{doc_id}')
-def get_document(doc_id: str, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    return document_data(db,owned(db,Document,doc_id,user.tenant_id))
-
-class DocumentPatch(BaseModel):
-    title: str | None = Field(None,min_length=1,max_length=240)
-    content: str | None = Field(None,min_length=1,max_length=200000)
-    category: str | None = Field(None,max_length=100)
-    status: Literal['draft','published','archived'] | None = None
-    visibility: Literal['public','internal'] | None = None
-
-@router.patch('/admin/documents/{doc_id}')
-def patch_document(doc_id: str, data: DocumentPatch, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    doc = owned(db,Document,doc_id,user.tenant_id)
-    changes = data.model_dump(exclude_none=True)
-    for key,value in changes.items():
-        setattr(doc,key,value)
-    doc.version += 1
-    doc.updated_at = now()
-    if 'content' in changes or 'title' in changes:
-        ingest_document(db,doc)
-    record(db,user,'更新知识版本',doc.title)
-    db.commit()
-    return document_data(db,doc)
-
-class RetrievalTest(BaseModel):
-    query: str = Field(min_length=1,max_length=1000)
-    public_only: bool = True
-
-@router.post('/admin/retrieval-test')
-def retrieval_test(data: RetrievalTest, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    return {'sources':retrieve(db,data.query,data.public_only,user.tenant_id), **retrieval_status()}
-
 @router.get('/admin/conversations')
-def conversations(q: str = '', include_demo: bool = False, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    query = select(Conversation).where(Conversation.tenant_id == user.tenant_id)
+def conversations(q: str = '', include_demo: bool = False, user: Admin = Depends(require('conversations.read')), db: Session = Depends(get_db)):
+    query = scope_conversations(select(Conversation),user)
     if not include_demo: query = query.where(Conversation.is_demo.is_(False))
     if q: query = query.where(Conversation.visitor_name.contains(q[:100]))
     return [conversation_data(db,c) for c in db.scalars(query.order_by(Conversation.updated_at.desc()).limit(300))]
 
 @router.get('/admin/conversations/{sid}')
-def conversation(sid: str, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    return conversation_data(db,owned(db,Conversation,sid,user.tenant_id),True)
+def conversation(sid: str, user: Admin = Depends(require('conversations.read')), db: Session = Depends(get_db)):
+    return conversation_data(db,owned(db,Conversation,sid,user),True)
 
 @router.post('/admin/conversations/{sid}/mark-demo')
-def mark_demo(sid: str, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    conv=owned(db,Conversation,sid,user.tenant_id)
+def mark_demo(sid: str, user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
+    conv=owned(db,Conversation,sid,user)
     conv.is_demo=True
     lead=db.scalar(select(Lead).where(Lead.conversation_id==sid))
     if lead: lead.is_demo=True
@@ -202,9 +126,12 @@ def mark_demo(sid: str, user: Admin = Depends(admin_user), db: Session = Depends
     return {'is_demo':True}
 
 @router.post('/admin/conversations/{sid}/takeover')
-def takeover(sid: str, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    conv = owned(db,Conversation,sid,user.tenant_id)
+def takeover(sid: str, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
+    conv = owned(db,Conversation,sid,user)
+    if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
+        raise HTTPException(409,'此咨询正由其他员工接待，请由管理员调整接待人')
     conv.status = 'human'
+    conv.assigned_to_id = user.id
     record(db,user,'接管咨询',sid)
     db.commit()
     return {'status':conv.status}
@@ -213,9 +140,11 @@ class TextInput(BaseModel):
     content: str = Field(min_length=1,max_length=4000)
 
 @router.post('/admin/conversations/{sid}/reply')
-def reply(sid: str, data: TextInput, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    conv = owned(db,Conversation,sid,user.tenant_id)
+def reply(sid: str, data: TextInput, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
+    conv = owned(db,Conversation,sid,user)
     if conv.status != 'human': raise HTTPException(409,'请先接管此咨询')
+    if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
+        raise HTTPException(409,'此咨询由其他员工接待，请先申请接管')
     msg = Message(conversation_id=sid,role='agent',content=data.content,mode='human')
     db.add(msg)
     conv.updated_at = now()
@@ -226,22 +155,25 @@ class StatusInput(BaseModel):
     status: Literal['bot','closed']
 
 @router.post('/admin/conversations/{sid}/status')
-def change_status(sid: str, data: StatusInput, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    conv = owned(db,Conversation,sid,user.tenant_id)
+def change_status(sid: str, data: StatusInput, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
+    conv = owned(db,Conversation,sid,user)
+    if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
+        raise HTTPException(409,'此咨询正由其他员工接待，请由管理员调整接待状态')
     conv.status = data.status
+    conv.assigned_to_id = None
     record(db,user,'调整接待状态',sid)
     db.commit()
     return {'status':conv.status}
 
 @router.get('/admin/leads')
-def leads(q: str = '', include_demo: bool = False, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    query = select(Lead).where(Lead.tenant_id == user.tenant_id)
+def leads(q: str = '', include_demo: bool = False, user: Admin = Depends(require('leads.read')), db: Session = Depends(get_db)):
+    query = scope_leads(select(Lead),user)
     if not include_demo: query = query.where(Lead.is_demo.is_(False))
     if q: query = query.where(Lead.name.contains(q[:100]))
     return [lead_data(l) for l in db.scalars(query.order_by(Lead.created_at.desc()).limit(500))]
 
 @router.get('/admin/leads-export')
-def export_leads(include_demo: bool = False, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
+def export_leads(include_demo: bool = False, user: Admin = Depends(require('leads.export')), db: Session = Depends(get_db)):
     entries = leads('',include_demo,user,db)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
@@ -256,22 +188,36 @@ def export_leads(include_demo: bool = False, user: Admin = Depends(admin_user), 
     return StreamingResponse(iter(['\ufeff'+buffer.getvalue()]),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="leads.csv"'})
 
 @router.get('/admin/leads/{lead_id}')
-def lead_detail(lead_id: str, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    lead = owned(db,Lead,lead_id,user.tenant_id)
+def lead_detail(lead_id: str, user: Admin = Depends(require('leads.read')), db: Session = Depends(get_db)):
+    lead = owned(db,Lead,lead_id,user)
     return {**lead_data(lead),'followups':[{'id':f.id,'author':f.author,'content':f.content,'created_at':f.created_at.isoformat()} for f in db.scalars(select(FollowUp).where(FollowUp.lead_id == lead.id).order_by(FollowUp.created_at.desc()))]}
 
 class LeadPatch(BaseModel):
     owner: str | None = Field(None,max_length=80)
+    owner_id: str | None = Field(None,max_length=36)
     stage: Literal['新线索','待分配','跟进中','已合格','商机推进','已成交','已失效'] | None = None
     level: Literal['待判定','一般咨询','低意向','中意向','高意向','不适用'] | None = None
     contact_verified: bool | None = None
     automatic_level: bool = False
 
 @router.patch('/admin/leads/{lead_id}')
-def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    lead = owned(db,Lead,lead_id,user.tenant_id)
+def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(require('leads.write')), db: Session = Depends(get_db)):
+    lead = owned(db,Lead,lead_id,user)
+    if 'owner_id' in data.model_fields_set or data.owner is not None:
+        check_permission(user,'leads.assign')
+        if data.owner is not None:
+            raise HTTPException(422,'请从员工列表选择负责人，不接受文字姓名分配')
+        employee=db.get(Admin,data.owner_id) if data.owner_id else None
+        if data.owner_id and (not employee or employee.tenant_id!=user.tenant_id or not employee.is_active or employee.role not in ('admin','advisor','support')):
+            raise HTTPException(422,'请选择启用且可以跟进线索的员工')
+        conv=db.get(Conversation,lead.conversation_id)
+        if conv.assigned_to_id==lead.owner_id:
+            conv.assigned_to_id=None
+            if conv.status=='human':conv.status='waiting'
+        lead.owner_id=employee.id if employee else None
+        lead.owner=employee.name if employee else '未分配'
     changed_level=data.level is not None and data.level!=lead.level
-    for k,v in data.model_dump(exclude_none=True,exclude={'automatic_level'}).items(): setattr(lead,k,v)
+    for k,v in data.model_dump(exclude_none=True,exclude={'automatic_level','owner','owner_id'}).items(): setattr(lead,k,v)
     if changed_level: lead.manual_level = True
     if data.automatic_level:
         from .chat import update_analysis
@@ -282,22 +228,22 @@ def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(admin_user),
     return lead_detail(lead_id,user,db)
 
 @router.post('/admin/leads/{lead_id}/followups')
-def followup(lead_id: str, data: TextInput, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
-    owned(db,Lead,lead_id,user.tenant_id)
+def followup(lead_id: str, data: TextInput, user: Admin = Depends(require('leads.write')), db: Session = Depends(get_db)):
+    owned(db,Lead,lead_id,user)
     db.add(FollowUp(lead_id=lead_id,author=user.name,content=data.content))
     record(db,user,'添加跟进',lead_id)
     db.commit()
     return lead_detail(lead_id,user,db)
 
 @router.get('/admin/overview')
-def overview(include_demo: bool = False, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
+def overview(include_demo: bool = False, user: Admin = Depends(require('analytics.read')), db: Session = Depends(get_db)):
     from zoneinfo import ZoneInfo
     from datetime import timezone
     def business_date(value):
         aware=value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
         return aware.astimezone(ZoneInfo('Asia/Shanghai')).date()
-    cs = db.scalars(select(Conversation).where(Conversation.tenant_id == user.tenant_id)).all()
-    ls = db.scalars(select(Lead).where(Lead.tenant_id == user.tenant_id)).all()
+    cs = db.scalars(scope_conversations(select(Conversation),user)).all()
+    ls = db.scalars(scope_leads(select(Lead),user)).all()
     if not include_demo:
         cs,ls = [c for c in cs if not c.is_demo],[l for l in ls if not l.is_demo]
     docs = db.scalars(select(Document).where(Document.tenant_id == user.tenant_id)).all()
@@ -324,5 +270,5 @@ def overview(include_demo: bool = False, user: Admin = Depends(admin_user), db: 
             'retrieval':retrieval_status(), 'model_configured':bool(settings().deepseek_api_key)}
 
 @router.get('/admin/audit')
-def audit(user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
+def audit(user: Admin = Depends(require('audit.read')), db: Session = Depends(get_db)):
     return [{'id':a.id,'actor':a.actor,'action':a.action,'target':a.target,'created_at':a.created_at.isoformat()} for a in db.scalars(select(Audit).where(Audit.tenant_id==user.tenant_id).order_by(Audit.created_at.desc()).limit(100))]

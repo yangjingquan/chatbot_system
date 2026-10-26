@@ -23,6 +23,8 @@ class Admin(Base):
     email: Mapped[str] = mapped_column(String(200), unique=True)
     password_hash: Mapped[str] = mapped_column(Text)
     name: Mapped[str] = mapped_column(String(100), default='机构管理员')
+    role: Mapped[str] = mapped_column(String(24), default='admin', server_default='admin')
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default='true')
 
 class AdminSession(Base):
     __tablename__ = 'admin_sessions'
@@ -42,6 +44,31 @@ class Document(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    edit_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+    knowledge_type: Mapped[str] = mapped_column(String(24), default='general', server_default='general')
+    exam_type: Mapped[str] = mapped_column(String(40), default='通用', server_default='通用')
+    region: Mapped[str] = mapped_column(String(80), default='全国', server_default='全国')
+    exam_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    responsible_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    policy_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+class DocumentRevision(Base):
+    __tablename__ = 'document_revisions'
+    __table_args__ = (UniqueConstraint('document_id','number',name='uq_document_revision'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    document_id: Mapped[str] = mapped_column(ForeignKey('documents.id'), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default='draft')
+    data: Mapped[dict] = mapped_column(JSON)
+    author_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    author_name: Mapped[str] = mapped_column(String(100), default='历史资料')
+    reviewer_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    review_note: Mapped[str] = mapped_column(Text, default='')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -63,6 +90,7 @@ class Conversation(Base):
     visitor_name: Mapped[str] = mapped_column(String(100), default='网站访客')
     source_page: Mapped[str] = mapped_column(String(300), default='官网')
     status: Mapped[str] = mapped_column(String(24), default='bot')
+    assigned_to_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     analysis: Mapped[dict] = mapped_column(JSON, default=dict)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -101,6 +129,7 @@ class Lead(Base):
     evidence: Mapped[list] = mapped_column(JSON, default=list)
     stage: Mapped[str] = mapped_column(String(24), default='新线索')
     owner: Mapped[str] = mapped_column(String(80), default='未分配')
+    owner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     manual_level: Mapped[bool] = mapped_column(Boolean, default=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

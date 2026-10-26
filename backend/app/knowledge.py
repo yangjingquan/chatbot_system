@@ -75,13 +75,16 @@ def warm_embeddings():
     except Exception:
         _model_status = 'unavailable'
 
-def retrieve(db, query: str, public_only: bool = True, tenant_id: str = TENANT, limit: int = 4) -> list[dict]:
+def retrieve(db, query: str, public_only: bool = True, tenant_id: str = TENANT, limit: int = 4, context: dict | None = None) -> list[dict]:
+    from .document_service import matches_context, infer_context
     statement = select(Chunk, Document).join(Document, Chunk.document_id == Document.id).where(
         Chunk.tenant_id == tenant_id, Document.tenant_id == tenant_id, Document.status == 'published')
     if public_only:
         statement = statement.where(Document.visibility == 'public')
     # Bounded first-release corpus. Scale beyond this with DB-side lexical ranking.
     rows = db.execute(statement.limit(5000)).all()
+    scope=context if context is not None else infer_context(query)
+    rows=[(chunk,doc) for chunk,doc in rows if matches_context(doc,scope)]
     if not rows:
         return []
     q = set(terms(query))
@@ -126,7 +129,8 @@ def retrieve(db, query: str, public_only: bool = True, tenant_id: str = TENANT, 
         chunk, doc = by_id[key]
         result.append({'chunk_id': chunk.id, 'document_id': doc.id, 'title': doc.title, 'category': doc.category,
                        'text': chunk.text, 'version': doc.version, 'is_demo': doc.is_demo,
-                       'source_url': doc.source_url, 'score': round(scores[key], 5)})
+                       'source_url': doc.source_url, 'exam_type':doc.exam_type,'exam_year':doc.exam_year,'region':doc.region,
+                       'score': round(scores[key], 5)})
     return result
 
 def parse_file(filename: str, content: bytes) -> str:

@@ -28,10 +28,11 @@ def test_public_retrieval_and_unpublish(admin):
     doc = res.json()
     matches = admin.post('/api/admin/retrieval-test', json={'query':'星河蓝鲸 ZX-TEST-187', 'public_only':True}).json()
     assert not any(s['document_id'] == doc['id'] for s in matches['sources'])
-    admin.patch('/api/admin/documents/' + doc['id'], json={'visibility':'public'})
+    draft=admin.patch('/api/admin/documents/' + doc['id'], json={'visibility':'public','expected_sequence':doc['edit_sequence']}).json()
+    doc=admin.post('/api/admin/documents/'+doc['id']+'/publish',json={'expected_sequence':draft['edit_sequence']}).json()
     matches = admin.post('/api/admin/retrieval-test', json={'query':'星河蓝鲸 ZX-TEST-187'}).json()
     assert any(s['document_id'] == doc['id'] for s in matches['sources'])
-    admin.patch('/api/admin/documents/' + doc['id'], json={'status':'archived'})
+    admin.post('/api/admin/documents/'+doc['id']+'/archive',json={'expected_sequence':doc['edit_sequence']})
     matches = admin.post('/api/admin/retrieval-test', json={'query':'星河蓝鲸 ZX-TEST-187'}).json()
     assert not any(s['document_id'] == doc['id'] for s in matches['sources'])
 

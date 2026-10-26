@@ -10,6 +10,7 @@ import {
   CircleCheck,
 } from "lucide-react";
 import { api, date, statusLabel, useResource } from "./api";
+import { useAccess } from "./auth";
 import {
   Badge,
   Empty,
@@ -57,6 +58,8 @@ export function MessageBubble({ message }: { message: any }) {
                 </strong>
                 <small>
                   版本 {s.version}
+                  {s.exam_year ? ` · ${s.exam_year}年度` : ""}
+                  {s.region ? ` · ${s.region}` : ""}
                   {s.is_demo ? " · 演示资料" : ""}
                 </small>
                 <p>{s.text}</p>
@@ -79,6 +82,7 @@ export function Conversations({
   includeDemo: boolean;
   version: number;
 }) {
+  const { user, can } = useAccess();
   const list = useResource<any[]>(
     `/admin/conversations?include_demo=${includeDemo}`,
     version,
@@ -97,6 +101,11 @@ export function Conversations({
       (v.visitor_name + v.last_message + v.source_page).includes(search) &&
       (filter === "all" || v.status === filter),
   );
+  const canHandle =
+    can("conversations.handle") &&
+    (!detail?.assigned_to_id ||
+      detail.assigned_to_id === user?.id ||
+      user?.role === "admin");
   useEffect(() => {
     if (!selected && rows.length) setSelected(rows[0].id);
   }, [list.data, selected]);
@@ -256,7 +265,7 @@ export function Conversations({
                   </p>
                 </div>
                 <div className="actions">
-                  {detail.status !== "human" && (
+                  {detail.status !== "human" && canHandle && (
                     <button
                       className="button small"
                       disabled={busy}
@@ -266,7 +275,7 @@ export function Conversations({
                       人工接管
                     </button>
                   )}
-                  {detail.status === "human" && (
+                  {detail.status === "human" && canHandle && (
                     <button
                       className="button secondary small"
                       disabled={busy}
@@ -276,7 +285,7 @@ export function Conversations({
                       转回机器人
                     </button>
                   )}
-                  {detail.status !== "closed" && (
+                  {detail.status !== "closed" && canHandle && (
                     <button
                       className="icon-button"
                       aria-label="结束咨询"
@@ -301,12 +310,14 @@ export function Conversations({
                 <textarea
                   id="agent-reply"
                   value={reply}
-                  disabled={detail.status !== "human" || busy}
+                  disabled={detail.status !== "human" || busy || !canHandle}
                   onChange={(e) => setReply(e.target.value)}
                   placeholder={
-                    detail.status === "human"
-                      ? "输入人工回复，Enter 发送，Shift+Enter 换行"
-                      : "接管咨询后可以发送人工回复"
+                    !canHandle
+                      ? "此会话正由其他员工接待"
+                      : detail.status === "human"
+                        ? "输入人工回复，Enter 发送，Shift+Enter 换行"
+                        : "接管咨询后可以发送人工回复"
                   }
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
@@ -324,7 +335,10 @@ export function Conversations({
                   <button
                     className="button small"
                     disabled={
-                      detail.status !== "human" || !reply.trim() || busy
+                      detail.status !== "human" ||
+                      !reply.trim() ||
+                      busy ||
+                      !canHandle
                     }
                     onClick={send}
                   >
@@ -344,16 +358,49 @@ export function Conversations({
               <dl>
                 <dt>咨询目的</dt>
                 <dd>{detail.analysis?.purpose || "待判定"}</dd>
+                <dt>购买意愿</dt>
+                <dd>
+                  {(
+                    {
+                      interested: "有明确咨询信号",
+                      exploring: "了解中",
+                      declined: "暂不考虑",
+                      unknown: "尚未明确",
+                    } as Record<string, string>
+                  )[detail.analysis?.purchase_state] || "尚未明确"}
+                </dd>
                 <dt>联系状态</dt>
                 <dd>
-                  {detail.lead
-                    ? "已留资 · " +
-                      (detail.lead.contact_verified ? "人工核验" : "待核验")
-                    : "未留资"}
+                  {detail.lead && !detail.lead.contact_allowed
+                    ? "已停止联系"
+                    : detail.lead
+                      ? "已留资 · " +
+                        (detail.lead.contact_verified ? "人工核验" : "待核验")
+                      : "未留资"}
                 </dd>
                 <dt>线索负责人</dt>
                 <dd>{detail.lead?.owner || "未分配"}</dd>
               </dl>
+              {detail.analysis?.needs?.length > 0 && (
+                <>
+                  <h3>各项需求</h3>
+                  <div className="need-list">
+                    {detail.analysis.needs.map((n: any, i: number) => (
+                      <div key={i}>
+                        <strong>{n.exam_type}</strong>
+                        <small>
+                          {n.purpose} ·{" "}
+                          {n.state === "declined"
+                            ? "已取消"
+                            : n.state === "switched"
+                              ? "已转考"
+                              : n.level || "待处理"}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
               <h3>关注标签</h3>
               <div className="tag-wrap">
                 {detail.analysis?.tags?.length ? (

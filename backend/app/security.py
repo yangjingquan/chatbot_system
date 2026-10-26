@@ -83,7 +83,7 @@ def admin_user(request: Request, db: Session = Depends(get_db)) -> Admin:
         db.commit()
         raise HTTPException(401, '登录已过期，请重新登录')
     user = db.get(Admin, login.admin_id)
-    if not user or user.tenant_id != TENANT:
+    if not user or user.tenant_id != TENANT or not user.is_active:
         raise HTTPException(401, '登录无效')
     return user
 

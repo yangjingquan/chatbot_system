@@ -14,40 +14,49 @@ from .db import get_db
 from .models import Company, Conversation, Document, Lead, Message, TENANT, now
 from .security import digest, limit, visitor
 from .knowledge import retrieve, retrieval_status
-from .scoring import analyze_intent, WITHDRAW_CONTACT
+from .scoring import analyze_messages, WITHDRAW_CONTACT
 from .llm import deepseek_stream
 from .admin import message_data
+from .document_service import document_active, infer_context, matches_context
 
 router = APIRouter(prefix='/widget')
 
 def event(kind, data):
     return f'event: {kind}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n'
 
-def public_message_data(db, message):
+def public_message_data(db, message, context=None):
     result=message_data(message)
     if message.role=='assistant' and message.sources:
         for source in message.sources:
             doc=db.get(Document,source.get('document_id'))
-            if (not doc or doc.tenant_id!=TENANT or doc.status!='published' or
-                doc.visibility!='public' or doc.version!=source.get('version')):
-                result.update(content='原回答引用的资料已更新或撤回，请重新提问获取当前有效信息。',
+            if (not doc or doc.tenant_id!=TENANT or not document_active(doc) or
+                doc.visibility!='public' or doc.version!=source.get('version') or
+                (context is not None and not matches_context(doc,context))):
+                result.update(content='原回答引用的资料已更新、过期或撤回，请重新提问获取当前有效信息。',
                               sources=[],mode='withdrawn',state='withdrawn')
                 break
     return result
 
 def update_analysis(db, conv):
-    user_messages = db.scalars(select(Message).where(Message.conversation_id==conv.id,Message.role=='user').order_by(Message.created_at.desc()).limit(8)).all()
+    from datetime import timezone
+    user_messages = db.scalars(select(Message).where(Message.conversation_id==conv.id,Message.role=='user').order_by(Message.created_at,Message.id)).all()
     lead = db.scalar(select(Lead).where(Lead.conversation_id==conv.id))
-    if lead and user_messages and WITHDRAW_CONTACT.search(user_messages[0].content):
-        lead.contact_allowed=False
-    analysis = analyze_intent('\n'.join(m.content for m in reversed(user_messages)),bool(lead and lead.contact_allowed))
-    for proof in analysis['evidence']:
-        proof['message_id'] = next((m.id for m in user_messages if proof['quote'] in m.content),None)
+    if lead and user_messages:
+        def aware(value):return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        if any(WITHDRAW_CONTACT.search(m.content) and aware(m.created_at)>=aware(lead.consent_at) for m in user_messages):
+            lead.contact_allowed=False
+    analysis = analyze_messages([{'id':m.id,'content':m.content} for m in user_messages],bool(lead and lead.contact_allowed),respect_withdrawal=False)
+    analysis['knowledge_context']=infer_context('',[m.content for m in user_messages])
     conv.analysis = analysis
     if lead:
         lead.tags,lead.evidence,lead.score,lead.purpose = analysis['tags'],analysis['evidence'],analysis['score'],analysis['purpose']
         if not lead.manual_level: lead.level=analysis['level']
     return analysis
+
+def backfill_analysis(db):
+    # Upgrade persisted v0.1 summaries once; manually confirmed lead levels remain intact.
+    for conv in db.scalars(select(Conversation)):
+        if conv.analysis.get('rule_version')!='training-v3':update_analysis(db,conv)
 
 @router.get('/config')
 def config(db: Session = Depends(get_db)):
@@ -137,7 +146,10 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
                 if match:
                     topic=match.group()+' '
                     break
-    sources=retrieve(db,topic+data.content)
+    active_exams=conv.analysis.get('active_exam_types',[])
+    if len(active_exams)==1 and not any(t in data.content for t in ('公安联考','国考','省考','选调','事业','招警','辅警','社区')):
+        topic=active_exams[0]+' '
+    sources=retrieve(db,topic+data.content,context=conv.analysis.get('knowledge_context') or infer_context(topic+data.content))
     mode=('deepseek' if settings().deepseek_api_key else 'extractive') if sources else 'unknown'
     answer=Message(conversation_id=conv.id,role='assistant',content='',reply_to=user_message.id,
                    mode=mode,state='pending',sources=sources)
@@ -167,7 +179,7 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
                 text+=end
                 yield event('delta',{'text':end})
             else:
-                for index,(kind,piece) in enumerate(deepseek_stream(data.content,sources,[public_message_data(db,m) for m in reversed(previous)])):
+                for index,(kind,piece) in enumerate(deepseek_stream(data.content,sources,[public_message_data(db,m,conv.analysis.get('knowledge_context',{})) for m in reversed(previous)])):
                     if kind=='usage':
                         usage=piece
                         continue
