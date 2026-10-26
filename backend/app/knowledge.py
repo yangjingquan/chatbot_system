@@ -134,7 +134,8 @@ def _retrieve_documents(db, query: str, public_only: bool = True, tenant_id: str
     return result
 
 def historical_commercial_text(source):
-    return source.get('knowledge_type')!='policy' and bool(re.search(r'\d[\d,.]*\s*(元|课时|学时)|开班',source.get('text','')))
+    from .commercial import reference_is_commercial
+    return reference_is_commercial(source)
 
 def retrieve(db,query:str,public_only:bool=True,tenant_id:str=TENANT,limit:int=4,context:dict|None=None):
     from .catalog import catalog_sources
@@ -142,7 +143,11 @@ def retrieve(db,query:str,public_only:bool=True,tenant_id:str=TENANT,limit:int=4
     scope=context if context is not None else infer_context(query)
     courses=catalog_sources(db,query,scope,tenant_id)
     docs=_retrieve_documents(db,query,public_only,tenant_id,limit,scope)
-    if public_only:docs=[s for s in docs if not historical_commercial_text(s)]
+    if public_only:
+        docs=[s for s in docs if not historical_commercial_text(s)]
+        # Known course questions use only the catalog's commercial facts. Policy evidence
+        # remains separate; generic documents cannot override a course's current state.
+        if courses:docs=[s for s in docs if s.get('knowledge_type')=='policy']
     # Course suggestions must not crowd out matching policy or other knowledge evidence.
     if courses and docs:return courses[:min(2,limit)]+docs[:max(0,limit-min(2,len(courses)))]
     return (courses+docs)[:limit]

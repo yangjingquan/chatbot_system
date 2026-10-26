@@ -446,6 +446,7 @@ export function Knowledge({
                 已提交审核，当前草稿已锁定。需要修改时由管理员退回。
               </p>
             )}
+            {edit.knowledge_type === "course" && <p className="review-notice">课程文件作为参考存档。机器人的课程、价格、课时和开班安排统一读取“课程与班次”，请在那里维护当前业务信息。</p>}
             {edit.review_note && (
               <p className="review-notice">审核意见：{edit.review_note}</p>
             )}

@@ -127,9 +127,35 @@ export function Dashboard({
     `/admin/overview?${queryString({ ...filterState.filters, include_demo: includeDemo })}`,
     version,
   );
-  if (resource.loading) return <Loading />;
-  if (resource.error)
-    return <ErrorBox text={resource.error} retry={resource.reload} />;
+  const header = (
+    <PageTitle
+      title="工作台"
+      description="掌握咨询动态，把需要跟进的事放在眼前。"
+      actions={
+        <Link className="button" to="/conversations">
+          <MessagesSquare size={16} />
+          处理咨询
+        </Link>
+      }
+    />
+  );
+  const filterControls = (
+    <section className="panel">
+      <Filters list={filterState} owners={owners.data || []} />
+    </section>
+  );
+  if (resource.loading || resource.error)
+    return (
+      <>
+        {header}
+        {filterControls}
+        {resource.loading ? (
+          <Loading />
+        ) : (
+          <ErrorBox text={resource.error} retry={resource.reload} />
+        )}
+      </>
+    );
   const d = resource.data,
     c = d.counts;
   const metrics = [
@@ -140,19 +166,8 @@ export function Dashboard({
   ] as const;
   return (
     <>
-      <PageTitle
-        title="工作台"
-        description="掌握咨询动态，把需要跟进的事放在眼前。"
-        actions={
-          <Link className="button" to="/conversations">
-            <MessagesSquare size={16} />
-            处理咨询
-          </Link>
-        }
-      />
-      <section className="panel">
-        <Filters list={filterState} owners={owners.data || []} />
-      </section>
+      {header}
+      {filterControls}
       <div className="metric-strip">
         {metrics.map(([title, value, Icon, note]) => (
           <div className="metric" key={title}>
@@ -189,8 +204,37 @@ export function Dashboard({
         </Link>
       </section>
       <section className="panel section-space">
-        <div className="panel-heading"><div><h2>跟进待办</h2><p>当前筛选中 {d.todo_count || 0} 条待办，停止联系和已结案线索不提醒外呼。</p></div><Link className="text-link" to="/todos">查看全部</Link></div>
-        {d.todos?.length ? <div className="table-wrap"><table><tbody>{d.todos.map((l:any)=><tr key={l.id}><td><Link to={"/leads?lead_id="+l.id}>{l.name}</Link></td><td>{date(l.next_followup_at,true)}</td><td>{l.owner}</td></tr>)}</tbody></table></div> : <div className="role-guide">当前没有需要跟进的待办。</div>}
+        <div className="panel-heading">
+          <div>
+            <h2>跟进待办</h2>
+            <p>
+              当前筛选中 {d.todo_count || 0}{" "}
+              条待办，停止联系和已结案线索不提醒外呼。
+            </p>
+          </div>
+          <Link className="text-link" to="/todos">
+            查看全部
+          </Link>
+        </div>
+        {d.todos?.length ? (
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {d.todos.map((l: any) => (
+                  <tr key={l.id}>
+                    <td>
+                      <Link to={"/leads?lead_id=" + l.id}>{l.name}</Link>
+                    </td>
+                    <td>{date(l.next_followup_at, true)}</td>
+                    <td>{l.owner}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="role-guide">当前没有需要跟进的待办。</div>
+        )}
       </section>
       <div className="dashboard-grid">
         <section className="panel trend-panel">
@@ -336,19 +380,31 @@ export function Analytics({
     `/admin/overview?${queryString({ ...filterState.filters, include_demo: includeDemo })}`,
     version,
   );
-  if (r.loading) return <Loading />;
-  if (r.error) return <ErrorBox text={r.error} retry={r.reload} />;
+  const header = (
+    <PageTitle
+      title="数据分析"
+      description="咨询、线索与知识质量，使用同一份明细口径。"
+    />
+  );
+  const filterControls = (
+    <section className="panel">
+      <Filters list={filterState} owners={owners.data || []} />
+    </section>
+  );
+  if (r.loading || r.error)
+    return (
+      <>
+        {header}
+        {filterControls}
+        {r.loading ? <Loading /> : <ErrorBox text={r.error} retry={r.reload} />}
+      </>
+    );
   const d = r.data,
     c = d.counts;
   return (
     <>
-      <PageTitle
-        title="数据分析"
-        description="咨询、线索与知识质量，使用同一份明细口径。"
-      />
-      <section className="panel">
-        <Filters list={filterState} owners={owners.data || []} />
-      </section>
+      {header}
+      {filterControls}
       <div className="metric-strip">
         <div className="metric">
           <span>会话留资率</span>

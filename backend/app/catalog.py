@@ -13,6 +13,7 @@ from .permissions import require, scoped_object
 from .querying import Paging, paginate
 from .documents import Exam
 from .document_service import aware
+from .commercial import has_amount, course_question
 
 router=APIRouter(prefix='/admin')
 
@@ -68,10 +69,10 @@ def check_batch(b):
     for start,end in ((b.starts_at,b.ends_at),(b.price_from,b.price_until)):
         if start and end and aware(start)>aware(end):raise HTTPException(422,'开始时间不能晚于结束时间')
     if b.mode in ('offline','hybrid') and not b.location.strip():raise HTTPException(422,'线下或混合授课须填写上课地点')
-    check_commercial_text(b.schedule)
+    for text in (b.name,b.location,b.schedule):check_commercial_text(text)
 
 def check_commercial_text(value):
-    if re.search(r'\d[\d,.]*\s*(元|课时|学时)',value):raise HTTPException(422,'价格和课时请填写专用字段，不要写入说明或开班安排')
+    if has_amount(value):raise HTTPException(422,'价格和课时请填写专用字段，不要写入名称、说明或开班安排')
 
 def record(db,user,action,target):db.add(Audit(tenant_id=user.tenant_id,actor=user.name,action=action,target=target))
 
@@ -95,7 +96,7 @@ def detail(course_id:str,user:Admin=Depends(require('courses.read')),db:Session=
 
 @router.post('/courses')
 def create(data:CourseInput,user:Admin=Depends(require('courses.write')),db:Session=Depends(get_db)):
-    check_commercial_text(data.description)
+    for value in (data.name,data.class_type,data.description):check_commercial_text(value)
     c=Course(tenant_id=user.tenant_id,**data.model_dump());db.add(c);db.flush()
     record(db,user,'新增课程',c.id);db.commit();return course_data(db,c)
 
@@ -105,7 +106,7 @@ def patch(course_id:str,data:CoursePatch,user:Admin=Depends(require('courses.wri
     for key,value in data.model_dump(exclude_unset=True,exclude={'expected_version'}).items():
         if value is None:raise HTTPException(422,'课程必填字段不可为空')
         setattr(c,key,value)
-    check_commercial_text(c.description)
+    for value in (c.name,c.class_type,c.description):check_commercial_text(value)
     c.version+=1;record(db,user,'更新课程',c.id);db.commit();return course_data(db,c)
 
 @router.post('/courses/{course_id}/batches')
@@ -123,11 +124,13 @@ def patch_batch(batch_id:str,data:BatchPatch,user:Admin=Depends(require('courses
     check_batch(b);b.version+=1;record(db,user,'更新班次或价格',b.id);db.commit();return row_data(b)
 
 def public_source(db,c):
-    pieces=[f'{c.name}；考试：{c.exam_type}；班型：{c.class_type}。']
+    def safe(value,fallback):return fallback if has_amount(value) else value
+    title=safe(c.name,c.exam_type+'课程（名称待校对）')
+    pieces=[f'{title}；考试：{c.exam_type}；班型：{safe(c.class_type,"班型待校对")}。']
     versions=[str(c.version)]
     if c.status!='active':pieces.append('该课程已停售，不能报价或接受报名。')
     else:
-        pieces.append(f'{c.hours}课时，每课时45分钟。{c.description}')
+        pieces.append(f'{c.hours}课时，每课时45分钟。{safe(c.description,"课程说明待管理员校对。")}')
         batches=db.scalars(select(CourseBatch).where(CourseBatch.course_id==c.id,CourseBatch.tenant_id==c.tenant_id).order_by(CourseBatch.created_at,CourseBatch.id)).all()
         visible=[b for b in batches if b.sale_status!='draft']
         if not visible:pieces.append('当前暂无已确认可报名班次，价格和开班时间需人工核实。')
@@ -135,9 +138,9 @@ def public_source(db,c):
             versions.append(b.id+':'+str(b.version))
             open_now=b.sale_status=='open' and (not b.ends_at or aware(b.ends_at)>=aware(now()))
             label='可咨询报名' if open_now else {'paused':'停售','sold_out':'已满班','ended':'已结束'}.get(b.sale_status,'已结束')
-            pieces.append(f'班次：{b.name}；状态：{label}。')
+            pieces.append(f'班次：{safe(b.name,"班次名称待校对")}；状态：{label}。')
             if not open_now:continue
-            pieces.append(f'授课方式：'+{'online':'线上','offline':'线下','hybrid':'线上及线下'}[b.mode]+f'；地点：{b.location or "线上"}；安排：{b.schedule}。')
+            pieces.append(f'授课方式：'+{'online':'线上','offline':'线下','hybrid':'线上及线下'}[b.mode]+f'；地点：{safe(b.location,"地点待校对") or "线上"}；安排：{safe(b.schedule,"安排待校对")}。')
             if b.starts_at:pieces.append(f'开班时间：{aware(b.starts_at).isoformat()}。')
             price_valid=(not b.price_from or aware(b.price_from)<=aware(now())) and (not b.price_until or aware(b.price_until)>=aware(now()))
             if b.price_cents is not None and price_valid:pieces.append(f'当前有效价格：{b.price_cents/100:.2f}元。')
@@ -145,13 +148,13 @@ def public_source(db,c):
     if c.is_demo:pieces.append('以上为虚构演示课程、价格及安排，不构成真实报价。')
     text='\n'.join(pieces)
     version=hashlib.sha256(('|'.join(versions)+text).encode()).hexdigest()[:20]
-    return {'kind':'catalog','course_id':c.id,'document_id':'catalog:'+c.id,'chunk_id':'catalog:'+c.id,'title':c.name,'category':'课程业务数据','text':text,'version':version,'exam_type':c.exam_type,'exam_year':None,'region':'全国','is_demo':c.is_demo,'source_url':None}
+    return {'kind':'catalog','course_id':c.id,'document_id':'catalog:'+c.id,'chunk_id':'catalog:'+c.id,'title':title,'category':'课程业务数据','text':text,'version':version,'exam_type':c.exam_type,'exam_year':None,'region':'全国','is_demo':c.is_demo,'source_url':None}
 
 def catalog_sources(db,query,context,tenant_id=TENANT):
     rows=db.scalars(select(Course).where(Course.tenant_id==tenant_id).order_by(Course.name,Course.id)).all()
     exact=[c for c in rows if c.name in query]
     if exact:return [public_source(db,c) for c in exact]
-    if not re.search(r'课程|培训|班|多少钱|报价|学费|课时|线上|线下|开课|开班|价格|试听|怎么报名',query):return []
+    if not course_question(query):return []
     exam=context.get('exam_type')
     return [public_source(db,c) for c in rows if c.exam_type==exam] if exam else []
 

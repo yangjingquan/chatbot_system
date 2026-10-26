@@ -199,7 +199,15 @@ class LeadPatch(BaseModel):
 
 @router.patch('/admin/leads/{lead_id}')
 def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(require('leads.write')), db: Session = Depends(get_db)):
+    from .students import crm_guard,lock_student,lock_conversations
+    crm_guard(db,user,'leads.write')
     lead = owned(db,Lead,lead_id,user)
+    db.refresh(lead)
+    if user.role=='advisor' and lead.owner_id!=user.id:raise HTTPException(404,'线索已转交')
+    if lead.student_id:lock_student(db,lead.student_id,user)
+    lock_conversations(db,[lead.conversation_id])
+    lead=db.scalar(scope_leads(select(Lead).where(Lead.id==lead_id),user).with_for_update().execution_options(populate_existing=True))
+    if not lead:raise HTTPException(404,'线索已转交')
     if 'owner_id' in data.model_fields_set or data.owner is not None:
         check_permission(user,'leads.assign')
         if data.owner is not None:
@@ -258,6 +266,13 @@ def overview(filters:BusinessFilters=Depends(),user:Admin=Depends(require('analy
     from .students import todo_query,student_query
     from .querying import count
     tasks=todo_query(db,user,filters)
+    from .scoring import EXAMS
+    related={c.id:c for c in db.scalars(select(Conversation).where(Conversation.tenant_id==user.tenant_id,Conversation.id.in_([l.conversation_id for l in ls])))} if ls else {}
+    exam_counts=Counter()
+    for lead in ls:
+        analysis=related[lead.conversation_id].analysis if lead.conversation_id in related else {}
+        names=set(lead.tags)|set(analysis.get('active_exam_types',[]))|{n.get('exam_type') for n in analysis.get('needs',[]) if n.get('state')=='active'}
+        exam_counts.update(sorted(names.intersection(EXAMS)))
     return {'include_demo':filters.include_demo,'filters':filters.model_dump(mode='json'),
             'counts':{'conversations':len(cs),'leads':len(ls),'contacted_conversations':len(contacted),'high_intent':sum(l.level=='高意向' for l in ls),
                       'documents':len(docs),'published':sum(document_active(d) and d.visibility=='public' for d in docs),
@@ -267,7 +282,7 @@ def overview(filters:BusinessFilters=Depends(),user:Admin=Depends(require('analy
             'student_count':count(db,student_query(db,user,filters)),
             'todo_count':count(db,tasks),'todos':[lead_data(l) for l in db.scalars(tasks.limit(5))],
             'trend':trend,'intent':[{'name':k,'value':v} for k,v in Counter(l.level for l in ls).items()],
-            'exams':[{'name':k,'value':v} for k,v in Counter(t for l in ls for t in l.tags if t in ('公安联考','国考','省考','选调生','事业单位','社会招警','辅警','社区工作者')).items()],
+            'exams':[{'name':k,'value':v} for k,v in exam_counts.items()],
             'recent_conversations':[conversation_data(db,c) for c in sorted(cs,key=lambda c:c.updated_at,reverse=True)[:5]],
             'recent_leads':[lead_data(l) for l in sorted(ls,key=lambda l:l.created_at,reverse=True)[:5]],
             'knowledge_gaps':gaps[:20], 'usage':{'total_tokens':sum(m.usage.get('total_tokens',0) for m in messages),'deepseek_answers':sum(m.mode=='deepseek' for m in messages)},
@@ -280,7 +295,7 @@ def audit(filters:BusinessFilters=Depends(),paging:Paging=Depends(),user:Admin=D
     if start:query=query.where(Audit.created_at>=start)
     if end:query=query.where(Audit.created_at<end)
     if filters.q:query=query.where(Audit.action.contains(filters.q,autoescape=True))
-    return paginate(db,query.order_by(Audit.created_at.desc(),Audit.id.desc()),paging,lambda a:{'id':a.id,'actor':a.actor,'action':a.action,'target':a.target,'created_at':a.created_at.isoformat()})
+    return paginate(db,query.order_by(Audit.created_at.desc(),Audit.id.desc()),paging,lambda a:{'id':a.id,'actor':a.actor,'action':a.action,'target':a.target,'details':a.details,'created_at':a.created_at.isoformat()})
 
 @router.get('/admin/filter-options')
 def filter_options(user:Admin=Depends(require('leads.read')),db:Session=Depends(get_db)):

@@ -55,3 +55,20 @@ def test_knowledge_pagination_searches_saved_drafts(admin):
     draft=admin.patch('/api/admin/documents/'+doc['id'],json={'expected_sequence':doc['edit_sequence'],'title':'草稿搜索独有标记'}).json()
     result=admin.get('/api/admin/documents',params={'q':'草稿搜索独有标记','status':'draft','page_size':1}).json()
     assert result['total']==1 and result['items'][0]['id']==doc['id']
+
+def test_exam_filter_includes_anonymous_and_service_inquiries(admin):
+    marker='匿名考试筛选'+uuid.uuid4().hex[:8]
+    with SessionLocal() as db:
+        purchase=Conversation(visitor_name=marker+'匿名',source_page=marker,token_hash='test',analysis={'active_exam_types':['国考'],'needs':[{'exam_type':'国考','purpose':'课程咨询','state':'active'}]})
+        service=Conversation(visitor_name=marker+'售后',source_page=marker,token_hash='test',analysis={'active_exam_types':[],'needs':[{'exam_type':'国考','purpose':'售后服务','state':'active'}]})
+        db.add_all([purchase,service]);db.flush()
+        from app.models import Message
+        db.add_all([Message(conversation_id=purchase.id,role='user',content='国考课程咨询'),Message(conversation_id=service.id,role='user',content='国考已购课程退费')])
+        db.add(Lead(conversation_id=service.id,name=marker+'售后',contact='test@example.invalid',consent_text='synthetic',tags=['售后服务']))
+        db.commit()
+    params={'q':marker,'exam_type':'国考'}
+    assert admin.get('/api/admin/conversations',params=params).json()['total']==2
+    assert admin.get('/api/admin/leads',params=params).json()['total']==1
+    overview=admin.get('/api/admin/overview',params=params).json()
+    assert overview['counts']['conversations']==2 and overview['counts']['leads']==1
+    assert overview['exams']==[{'name':'国考','value':1}]

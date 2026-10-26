@@ -23,7 +23,8 @@ export function Configuration({
   version: number;
   onChange: () => void;
 }) {
-  const auditList=usePaged("/admin/audit",true,version),audit=auditList.resource;
+  const auditList = usePaged("/admin/audit", true, version),
+    audit = auditList.resource;
   const r = useResource<any>("/admin/settings", version),
     toast = useToast();
   const [form, setForm] = useState<any>(null),
@@ -301,6 +302,12 @@ export function Configuration({
                         <td>{a.action}</td>
                         <td className="muted audit-target">
                           {a.target || "—"}
+                          {a.details && (
+                            <details>
+                              <summary>查看详情</summary>
+                              <p>{a.details}</p>
+                            </details>
+                          )}
                         </td>
                         <td className="muted nowrap">
                           {date(a.created_at, true)}

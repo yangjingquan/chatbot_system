@@ -23,7 +23,10 @@ export function StudentAssociation({
     "/admin/leads/" + lead.id + "/student-candidates",
   );
   const choices = useResource<any>(
-    "/admin/students?page_size=100&include_demo="+lead.is_demo+"&q=" + encodeURIComponent(search),
+    "/admin/students?page_size=100&include_demo=" +
+      lead.is_demo +
+      "&q=" +
+      encodeURIComponent(search),
   );
   async function attach(id?: string) {
     setBusy(true);
@@ -162,7 +165,10 @@ export function Students({
     [reason, setReason] = useState(""),
     [confirmed, setConfirmed] = useState(false);
   const choices = useResource<any>(
-    "/admin/students?page_size=100&include_demo="+includeDemo+"&q=" + encodeURIComponent(mergeSearch),
+    "/admin/students?page_size=100&include_demo=" +
+      includeDemo +
+      "&q=" +
+      encodeURIComponent(mergeSearch),
     can("students.merge") ? version : -1,
   );
   // The selected profile is read through its own scoped endpoint, including deep links.
@@ -267,6 +273,7 @@ export function Students({
       setMergeId("");
       setReason("");
       setConfirmed(false);
+      choices.reload();
       toast("档案已人工合并，各次联系许可保持独立");
     } catch (e: any) {
       setError(e.message);

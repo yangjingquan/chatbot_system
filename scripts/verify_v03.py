@@ -7,7 +7,7 @@ from sqlalchemy import text,select
 from fastapi.testclient import TestClient
 from app.db import engine,SessionLocal
 from app.main import app
-from app.models import Lead,Conversation,now
+from app.models import Lead,Conversation,Message,now
 from app.migrations import migrate_schema
 
 tables=('admins','documents','conversations','messages','leads','followups')
@@ -51,5 +51,16 @@ with TestClient(app,headers={'Origin':os.environ['PUBLIC_ORIGIN']}) as client:
     assert ok(client.get('/api/admin/overview',params=params))['counts']['leads']==525
     export=client.get('/api/admin/leads-export',params=params);export.raise_for_status()
     assert len(list(csv.reader(io.StringIO(export.content.decode('utf-8-sig')))))-1==525
+    marker='PG匿名筛选'+uuid.uuid4().hex[:8]
+    with SessionLocal() as db:
+        for index,purpose in enumerate(('课程咨询','售后服务')):
+            cv=Conversation(visitor_name=marker,source_page=marker,token_hash='synthetic',analysis={'active_exam_types':[],'needs':[{'exam_type':'国考','purpose':purpose,'state':'active'}]})
+            db.add(cv);db.flush();db.add(Message(conversation_id=cv.id,role='user',content='国考咨询'))
+            if index:db.add(Lead(conversation_id=cv.id,name=marker,contact='test@example.invalid',consent_text='synthetic',tags=['售后服务']))
+        db.commit()
+    params={'q':marker,'exam_type':'国考'}
+    assert ok(client.get('/api/admin/conversations',params=params))['total']==2
+    filtered=ok(client.get('/api/admin/overview',params=params))
+    assert filtered['counts']['leads']==1 and filtered['exams']==[{'name':'国考','value':1}]
     migrate_schema(engine)
     print(json.dumps({'status':'passed','preserved_rows':before,'price_edit_statuses':statuses,'merge_statuses':merge_statuses,'filtered_rows':525,'checks':['additive-upgrade','course-price-cas','manual-merge-cas','contact-candidate-only','postgres-json-filters','pagination-over-old-cap','csv-and-dashboard-consistency','repeat-migration']},ensure_ascii=False))

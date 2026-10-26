@@ -152,6 +152,7 @@ class Audit(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
     actor: Mapped[str] = mapped_column(String(100))
     action: Mapped[str] = mapped_column(String(120))
+    details:Mapped[str]=mapped_column(Text,default='',server_default='')
     target: Mapped[str] = mapped_column(String(240), default='')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 

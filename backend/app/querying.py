@@ -40,7 +40,12 @@ def common(query,model,filters):
 def json_has(db,column,value):
     if db.bind.dialect.name=='postgresql':return cast(column,JSONB).contains([value])
     values=func.json_each(column).table_valued('value').alias()
+    if isinstance(value,dict):
+        return select(values.c.value).where(*(func.json_extract(values.c.value,'$.'+key)==item for key,item in value.items())).exists()
     return select(values.c.value).where(values.c.value==value).exists()
+
+def conversation_exam(db,exam):
+    return or_(json_has(db,Conversation.analysis['active_exam_types'],exam),json_has(db,Conversation.analysis['needs'],{'exam_type':exam,'state':'active'}))
 
 def lead_conditions(db,filters):
     conditions=[]
@@ -48,7 +53,9 @@ def lead_conditions(db,filters):
     if filters.stage:conditions.append(Lead.stage==filters.stage)
     if filters.level:conditions.append(Lead.level==filters.level)
     if filters.contact_state:conditions.append(Lead.contact_allowed.is_(filters.contact_state=='allowed'))
-    if filters.exam_type:conditions.append(json_has(db,Lead.tags,filters.exam_type))
+    if filters.exam_type:
+        linked=select(Conversation.id).where(Conversation.id==Lead.conversation_id,conversation_exam(db,filters.exam_type)).correlate(Lead).exists()
+        conditions.append(or_(json_has(db,Lead.tags,filters.exam_type),linked))
     return conditions
 
 def lead_query(db,user,filters):
@@ -62,8 +69,11 @@ def conversation_query(db,user,filters,status=''):
     query=common(scope_conversations(select(Conversation),user),Conversation,filters)
     engaged=or_(select(Message.id).where(Message.conversation_id==Conversation.id,Message.role=='user').exists(),select(Lead.id).where(Lead.conversation_id==Conversation.id).exists())
     query=query.where(engaged)
-    conditions=lead_conditions(db,filters)
+    conditions=lead_conditions(db,filters.model_copy(update={'exam_type':''}))
     if conditions:query=query.where(select(Lead.id).where(Lead.conversation_id==Conversation.id,*conditions).exists())
+    if filters.exam_type:
+        tagged_lead=select(Lead.id).where(Lead.conversation_id==Conversation.id,json_has(db,Lead.tags,filters.exam_type)).correlate(Conversation).exists()
+        query=query.where(or_(conversation_exam(db,filters.exam_type),tagged_lead))
     if status:query=query.where(Conversation.status==status)
     if filters.q:
         needle='%'+filters.q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'

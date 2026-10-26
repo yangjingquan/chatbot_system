@@ -4,6 +4,7 @@ from .db import Base
 
 def migrate_schema(engine):
     additions={
+        'audit_logs':{'details':"TEXT NOT NULL DEFAULT ''"},
         'admins':{'role':"VARCHAR(24) NOT NULL DEFAULT 'admin'",'is_active':'BOOLEAN NOT NULL DEFAULT TRUE'},
         'leads':{'contact_allowed':'BOOLEAN NOT NULL DEFAULT TRUE','owner_id':'VARCHAR(36)',
                  'contact_hash':'VARCHAR(64)','student_id':'VARCHAR(36)','next_followup_at':'TIMESTAMP'},
