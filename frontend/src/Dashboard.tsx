@@ -347,8 +347,8 @@ export function Analytics({
         </div>
         <div className="metric">
           <span>人工确认合格</span>
-          <strong>{d.recent_leads.length ? "—" : "—"}</strong>
-          <p>查看线索阶段，首版暂不推算合格率</p>
+          <strong>{c.qualified}<small>条</small></strong>
+          <p>阶段为已合格、商机推进或已成交</p>
         </div>
         <div className="metric">
           <span>DeepSeek 回答数</span>

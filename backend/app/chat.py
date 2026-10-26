@@ -11,10 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
-from .models import Company, Conversation, Lead, Message, TENANT, now
+from .models import Company, Conversation, Document, Lead, Message, TENANT, now
 from .security import digest, limit, visitor
 from .knowledge import retrieve, retrieval_status
-from .scoring import analyze_intent
+from .scoring import analyze_intent, WITHDRAW_CONTACT
 from .llm import deepseek_stream
 from .admin import message_data
 
@@ -23,10 +23,24 @@ router = APIRouter(prefix='/widget')
 def event(kind, data):
     return f'event: {kind}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n'
 
+def public_message_data(db, message):
+    result=message_data(message)
+    if message.role=='assistant' and message.sources:
+        for source in message.sources:
+            doc=db.get(Document,source.get('document_id'))
+            if (not doc or doc.tenant_id!=TENANT or doc.status!='published' or
+                doc.visibility!='public' or doc.version!=source.get('version')):
+                result.update(content='原回答引用的资料已更新或撤回，请重新提问获取当前有效信息。',
+                              sources=[],mode='withdrawn',state='withdrawn')
+                break
+    return result
+
 def update_analysis(db, conv):
     user_messages = db.scalars(select(Message).where(Message.conversation_id==conv.id,Message.role=='user').order_by(Message.created_at.desc()).limit(8)).all()
     lead = db.scalar(select(Lead).where(Lead.conversation_id==conv.id))
-    analysis = analyze_intent('\n'.join(m.content for m in reversed(user_messages)),bool(lead))
+    if lead and user_messages and WITHDRAW_CONTACT.search(user_messages[0].content):
+        lead.contact_allowed=False
+    analysis = analyze_intent('\n'.join(m.content for m in reversed(user_messages)),bool(lead and lead.contact_allowed))
     for proof in analysis['evidence']:
         proof['message_id'] = next((m.id for m in user_messages if proof['quote'] in m.content),None)
     conv.analysis = analysis
@@ -63,7 +77,7 @@ def new_session(data: SessionCreate, request: Request, db: Session = Depends(get
 def history(session_id: str, request: Request, db: Session = Depends(get_db)):
     conv=visitor(request,session_id,db)
     messages=db.scalars(select(Message).where(Message.conversation_id==conv.id).order_by(Message.created_at,Message.id)).all()
-    return {'id':conv.id,'status':conv.status,'messages':[message_data(m) for m in messages],
+    return {'id':conv.id,'status':conv.status,'messages':[public_message_data(db,m) for m in messages],
             'has_contact':bool(db.scalar(select(Lead.id).where(Lead.conversation_id==conv.id)))}
 
 class ChatInput(BaseModel):
@@ -81,9 +95,10 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
     if existing:
         answer=db.scalar(select(Message).where(Message.reply_to==existing.id))
         if answer and answer.state=='completed':
+            visible=public_message_data(db,answer)
             def replay():
-                yield event('meta',{'mode':answer.mode,'sources':answer.sources})
-                yield event('delta',{'text':answer.content})
+                yield event('meta',{'mode':visible['mode'],'sources':visible['sources']})
+                yield event('delta',{'text':visible['content']})
                 yield event('done',{'id':answer.id,'status':conv.status})
             return StreamingResponse(replay(),media_type='text/event-stream')
         if conv.status in ('human','waiting'):
@@ -152,7 +167,7 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
                 text+=end
                 yield event('delta',{'text':end})
             else:
-                for index,(kind,piece) in enumerate(deepseek_stream(data.content,sources,[message_data(m) for m in reversed(previous)])):
+                for index,(kind,piece) in enumerate(deepseek_stream(data.content,sources,[public_message_data(db,m) for m in reversed(previous)])):
                     if kind=='usage':
                         usage=piece
                         continue
@@ -195,11 +210,12 @@ def contact(session_id: str, data: ContactInput, request: Request, db: Session =
     lead=db.scalar(select(Lead).where(Lead.conversation_id==conv.id))
     if not lead:
         lead=Lead(conversation_id=conv.id,name=data.name.strip() or '网站访客',contact=value,
-                  consent_text=db.get(Company,TENANT).config['contact_notice'])
+                  consent_text=db.get(Company,TENANT).config['contact_notice'],is_demo=conv.is_demo,contact_allowed=True)
         db.add(lead)
     else:
         lead.name,lead.contact=data.name.strip() or '网站访客',value
         lead.contact_verified=False
+        lead.contact_allowed=True
         lead.consent_at=now()
     conv.visitor_name=lead.name
     db.flush()

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Search,
   Download,
@@ -40,6 +40,7 @@ export function Leads({
   version: number;
   customers?: boolean;
 }) {
+  const originalLevel = useRef("");
   const r = useResource<any[]>(
       `/admin/leads?include_demo=${includeDemo}`,
       version,
@@ -65,7 +66,9 @@ export function Leads({
   );
   async function open(id: string) {
     try {
-      setDetail(await api("/admin/leads/" + id));
+      const result = await api("/admin/leads/" + id);
+      setDetail(result);
+      originalLevel.current = result.level;
       setNote("");
     } catch (e: any) {
       toast(e.message, true);
@@ -80,13 +83,32 @@ export function Leads({
           body: JSON.stringify({
             owner: detail.owner,
             stage: detail.stage,
-            level: detail.level,
+            level:
+              detail.level !== originalLevel.current ? detail.level : undefined,
             contact_verified: detail.contact_verified,
           }),
         }),
       );
       r.reload();
-      toast("线索已更新，人工等级优先保留");
+      originalLevel.current = detail.level;
+      toast("线索跟进状态已更新");
+    } catch (e: any) {
+      toast(e.message, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function restoreAutomatic() {
+    setBusy(true);
+    try {
+      const result = await api("/admin/leads/" + detail.id, {
+        method: "PATCH",
+        body: JSON.stringify({ automatic_level: true }),
+      });
+      setDetail(result);
+      originalLevel.current = result.level;
+      r.reload();
+      toast("已恢复按最新对话自动分级");
     } catch (e: any) {
       toast(e.message, true);
     } finally {
@@ -316,7 +338,11 @@ export function Leads({
               <Phone size={16} />
               {detail.contact}
               <Badge tone="muted">
-                {detail.contact_verified ? "人工核验" : "待核验"}
+                {!detail.contact_allowed
+                  ? "已停止联系"
+                  : detail.contact_verified
+                    ? "人工核验"
+                    : "待核验"}
               </Badge>
             </p>
             <div className="form-row">
@@ -371,6 +397,16 @@ export function Leads({
               <Save size={16} />
               保存跟进状态
             </button>
+            {detail.manual_level && (
+              <button
+                className="button secondary full"
+                disabled={busy}
+                onClick={restoreAutomatic}
+                style={{ marginTop: 10 }}
+              >
+                恢复自动分级
+              </button>
+            )}
             <h3>
               意向证据 <small>规则分数 {detail.score} / 100</small>
             </h3>

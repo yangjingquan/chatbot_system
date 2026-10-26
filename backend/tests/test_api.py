@@ -11,6 +11,12 @@ def test_auth_and_csrf(client):
     bad = client.post('/api/auth/login', headers={'Origin': 'http://evil.example'}, json={'email':'a','password':'b'})
     assert bad.status_code == 403
 
+def test_login_brute_force_is_limited(client):
+    for _ in range(10):
+        response=client.post('/api/auth/login',headers={'Origin':'http://testserver'},json={'email':'invalid@example.invalid','password':'wrong'})
+        assert response.status_code==401
+    assert client.post('/api/auth/login',headers={'Origin':'http://testserver'},json={'email':'invalid@example.invalid','password':'wrong'}).status_code==429
+
 def test_admin_config_never_returns_key(admin):
     data = admin.get('/api/admin/settings').json()
     assert 'deepseek_api_key' not in str(data)
@@ -95,7 +101,15 @@ def test_unknown_question_has_no_fabricated_sources(client):
 
 def test_mark_demo_excludes_test_traffic(admin):
     sid,headers=session(admin)
+    admin.post(f'/api/widget/sessions/{sid}/messages',headers=headers,json={'content':'未知问题XYZQ','client_id':str(uuid.uuid4())})
     before=admin.get('/api/admin/overview').json()['counts']['conversations']
     assert admin.post(f'/api/admin/conversations/{sid}/mark-demo').status_code==200
     after=admin.get('/api/admin/overview').json()['counts']['conversations']
     assert after==before-1
+
+def test_opening_widget_without_engagement_does_not_inflate_consultations(admin):
+    before=admin.get('/api/admin/overview').json()['counts']['conversations']
+    sid,headers=session(admin)
+    assert admin.get('/api/admin/overview').json()['counts']['conversations']==before
+    admin.post(f'/api/widget/sessions/{sid}/contact',headers=headers,json={'name':'直接留资','contact':'test@example.invalid','consent':True})
+    assert admin.get('/api/admin/overview').json()['counts']['conversations']==before+1

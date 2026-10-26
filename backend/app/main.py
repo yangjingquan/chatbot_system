@@ -20,6 +20,7 @@ async def lifespan(app):
         # Upgrade initial local records to encrypted contacts without losing data.
         if engine.dialect.name=='postgresql':
             conn.execute(text('ALTER TABLE leads ALTER COLUMN contact TYPE TEXT'))
+            conn.execute(text('ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_allowed BOOLEAN NOT NULL DEFAULT TRUE'))
         migrate_contacts(conn)
     with SessionLocal() as db:
         seed(db)

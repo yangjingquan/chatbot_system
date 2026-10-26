@@ -7,7 +7,7 @@
   var storageKey = "zhixing_support_" + origin;
   var root = document.createElement("div");
   root.id = "zhixing-support-widget";
-  var shadow = root.attachShadow({ mode: "closed" });
+  var shadow = root.attachShadow({ mode: "open" });
   var style = document.createElement("style");
   style.textContent =
     ':host{all:initial}button{font:600 14px system-ui,-apple-system,"PingFang SC",sans-serif;cursor:pointer}.launcher{position:fixed;right:24px;bottom:24px;z-index:2147483600;background:#174a81;color:white;border:0;border-radius:40px;padding:16px 22px;display:flex;align-items:center;gap:9px;box-shadow:0 6px 24px #153b6429}.launcher:hover{background:#123d6c}.launcher:focus-visible{outline:3px solid #72a6ef;outline-offset:4px}.panel{position:fixed;right:24px;bottom:96px;z-index:2147483599;width:400px;height:min(680px,calc(100dvh - 120px));border:1px solid #dce3ea;border-radius:16px;box-shadow:0 16px 64px #153b6430;overflow:hidden;background:white}.panel[hidden]{display:none}.panel iframe{width:100%;height:100%;border:0;display:block}@media(max-width:500px){.panel{right:8px;left:8px;bottom:84px;width:auto;height:calc(100dvh - 100px)}.launcher{right:16px;bottom:16px}}';

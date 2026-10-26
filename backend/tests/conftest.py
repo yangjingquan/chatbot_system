@@ -14,6 +14,10 @@ from app.main import app
 
 @pytest.fixture
 def client():
+    # Each case gets an isolated limiter clock/counter. Limits still apply within a case.
+    from app.security import _memory, _guard
+    with _guard:
+        _memory.clear()
     with TestClient(app) as test:
         yield test
 

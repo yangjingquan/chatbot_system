@@ -37,7 +37,7 @@ def document_data(db, d, full=True):
 
 def lead_data(l):
     return {k: (getattr(l,k).isoformat() if k.endswith('_at') else getattr(l,k)) for k in
-            ('id','conversation_id','name','contact','contact_verified','level','score','purpose','tags','evidence','stage','owner','manual_level','is_demo','created_at','updated_at')}
+            ('id','conversation_id','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','manual_level','is_demo','created_at','updated_at')}
 
 def conversation_data(db, c, full=False):
     messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
@@ -245,12 +245,12 @@ def export_leads(include_demo: bool = False, user: Admin = Depends(admin_user), 
     entries = leads('',include_demo,user,db)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(['姓名','联系方式','核验状态','意向等级','跟进阶段','负责人','演示数据'])
+    writer.writerow(['姓名','联系方式','核验状态','联系许可','意向等级','跟进阶段','负责人','演示数据'])
     def safe(v):
         s = str(v)
         return "'" + s if s.startswith(('=','+','-','@','\t','\r')) else s
     for row in entries:
-        writer.writerow([safe(row['name']),safe(row['contact']),'已核验' if row['contact_verified'] else '待核验',row['level'],row['stage'],safe(row['owner']),row['is_demo']])
+        writer.writerow([safe(row['name']),safe(row['contact']),'已核验' if row['contact_verified'] else '待核验','可就本次咨询联系' if row['contact_allowed'] else '已停止联系',row['level'],row['stage'],safe(row['owner']),row['is_demo']])
     record(db,user,'导出线索',str(len(entries)))
     db.commit()
     return StreamingResponse(iter(['\ufeff'+buffer.getvalue()]),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="leads.csv"'})
@@ -265,12 +265,18 @@ class LeadPatch(BaseModel):
     stage: Literal['新线索','待分配','跟进中','已合格','商机推进','已成交','已失效'] | None = None
     level: Literal['待判定','一般咨询','低意向','中意向','高意向','不适用'] | None = None
     contact_verified: bool | None = None
+    automatic_level: bool = False
 
 @router.patch('/admin/leads/{lead_id}')
 def patch_lead(lead_id: str, data: LeadPatch, user: Admin = Depends(admin_user), db: Session = Depends(get_db)):
     lead = owned(db,Lead,lead_id,user.tenant_id)
-    for k,v in data.model_dump(exclude_none=True).items(): setattr(lead,k,v)
-    if data.level is not None: lead.manual_level = True
+    changed_level=data.level is not None and data.level!=lead.level
+    for k,v in data.model_dump(exclude_none=True,exclude={'automatic_level'}).items(): setattr(lead,k,v)
+    if changed_level: lead.manual_level = True
+    if data.automatic_level:
+        from .chat import update_analysis
+        lead.manual_level=False
+        update_analysis(db,db.get(Conversation,lead.conversation_id))
     record(db,user,'更新线索',lead.id)
     db.commit()
     return lead_detail(lead_id,user,db)
@@ -297,6 +303,8 @@ def overview(include_demo: bool = False, user: Admin = Depends(admin_user), db: 
     docs = db.scalars(select(Document).where(Document.tenant_id == user.tenant_id)).all()
     ids = [c.id for c in cs]
     messages = db.scalars(select(Message).where(Message.conversation_id.in_(ids))).all() if ids else []
+    engaged={m.conversation_id for m in messages if m.role=='user'}|{l.conversation_id for l in ls}
+    cs=[c for c in cs if c.id in engaged]
     trend=[]
     for i in range(6,-1,-1):
         day = business_date(now() - timedelta(days=i))
@@ -306,7 +314,8 @@ def overview(include_demo: bool = False, user: Admin = Depends(admin_user), db: 
             'counts':{'conversations':len(cs),'leads':len(ls),'high_intent':sum(l.level=='高意向' for l in ls),
                       'documents':len(docs),'published':sum(d.status=='published' and d.visibility=='public' for d in docs),
                       'pending':sum(l.stage in ('新线索','待分配') for l in ls),'handoffs':sum(c.status=='waiting' for c in cs),
-                      'customers':sum(l.stage=='已成交' for l in ls)},
+                      'customers':sum(l.stage=='已成交' for l in ls),
+                      'qualified':sum(l.stage in ('已合格','商机推进','已成交') for l in ls)},
             'trend':trend,'intent':[{'name':k,'value':v} for k,v in Counter(l.level for l in ls).items()],
             'exams':[{'name':k,'value':v} for k,v in Counter(t for l in ls for t in l.tags if t in ('公安联考','国考','省考','选调生','事业单位','社会招警','辅警','社区工作者')).items()],
             'recent_conversations':[conversation_data(db,c) for c in sorted(cs,key=lambda c:c.updated_at,reverse=True)[:5]],

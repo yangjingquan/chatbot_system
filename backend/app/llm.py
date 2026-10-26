@@ -16,16 +16,23 @@ def deepseek_stream(question: str, sources: list[dict], history: list[dict]):
         with client.stream('POST', config.deepseek_base_url.rstrip('/') + '/chat/completions',
                            headers={'Authorization': f'Bearer {config.deepseek_api_key}'}, json=payload) as response:
             response.raise_for_status()
+            protocol_done=False
+            finish_reason=None
             for line in response.iter_lines():
                 if not line.startswith('data: '):
                     continue
                 data = line[6:]
                 if data == '[DONE]':
+                    protocol_done=True
                     break
                 item = json.loads(data)
                 if item.get('usage'):
                     yield 'usage', item['usage']
                 for choice in item.get('choices', []):
+                    if choice.get('finish_reason') is not None:
+                        finish_reason=choice['finish_reason']
                     content = choice.get('delta', {}).get('content')
                     if content:
                         yield 'delta', content
+            if not protocol_done or finish_reason!='stop':
+                raise RuntimeError('模型流未完整结束或输出被截断')

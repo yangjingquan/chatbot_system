@@ -3,8 +3,16 @@ import re
 
 EXAMS = ('公安联考', '国考', '省考', '选调生', '事业单位', '事业编', '社会招警', '辅警', '社区工作者')
 NEGATIVE = re.compile(r'(不想|不需要|不用|不打算|不考虑|不要|暂不|不是|没打算|不感兴趣|取消)')
+WITHDRAW_CONTACT = re.compile(r'(不用|不要|别|停止|不需要|不再).{0,5}联系|撤回.{0,8}(同意|授权|联系)')
+REJECT_PURCHASE = re.compile(r'(不打算|不想|不考虑|没打算|不再|暂不|取消).{0,6}(报名|报班|购买|采购|试听)')
 
 def analyze_intent(text: str, contactable: bool = False) -> dict:
+    latest = next((line for line in reversed(text.split('\n')) if line.strip()),'')
+    if WITHDRAW_CONTACT.search(latest): contactable=False
+    if REJECT_PURCHASE.search(latest):
+        return {'purpose':'课程咨询','score':0,'level':'一般咨询','tags':['暂不考虑'],
+                'evidence':[{'label':'最新明确拒绝','quote':latest[:180],'points':0}],
+                'contactable':contactable,'rule_version':'training-v2'}
     clauses = [s.strip() for s in re.split(r'[，。！？；\n,!?;]', text) if s.strip()]
     positive = [s for s in clauses if not NEGATIVE.search(s)]
     evidence, tags, score = [], [], 0

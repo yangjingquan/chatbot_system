@@ -18,8 +18,11 @@ export async function api<T = any>(
       .catch(() => ({ detail: "服务暂时不可用，请稍后重试" }));
     if (response.status === 401 && !path.startsWith("/auth/"))
       window.dispatchEvent(new Event("session-expired"));
-    throw new Error(
-      typeof data.detail === "string" ? data.detail : "输入内容不符合要求",
+    throw Object.assign(
+      new Error(
+        typeof data.detail === "string" ? data.detail : "输入内容不符合要求",
+      ),
+      { status: response.status },
     );
   }
   return response.json();

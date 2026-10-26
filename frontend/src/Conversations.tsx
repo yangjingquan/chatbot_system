@@ -122,10 +122,9 @@ export function Conversations({
       clearInterval(timer);
     };
   }, [selected, version]);
-  useEffect(
-    () => bottom.current?.scrollIntoView({ block: "nearest" }),
-    [detail?.messages?.length],
-  );
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: "nearest" });
+  }, [detail?.messages?.length]);
   async function action(path: string, body?: any) {
     setBusy(true);
     try {

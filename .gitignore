@@ -10,3 +10,4 @@ test-results/
 .superpowers/
 .DS_Store
 *.log
+*.tsbuildinfo

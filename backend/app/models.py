@@ -91,6 +91,7 @@ class Lead(Base):
     name: Mapped[str] = mapped_column(String(100))
     contact: Mapped[str] = mapped_column(EncryptedContact())
     contact_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    contact_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
     consent_text: Mapped[str] = mapped_column(Text)
     consent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     level: Mapped[str] = mapped_column(String(24), default='待判定')

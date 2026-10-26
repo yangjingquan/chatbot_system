@@ -55,7 +55,9 @@ def limit(key: str, maximum: int, seconds: int = 60):
 def allowed_origins():
     origin = settings().public_origin.rstrip('/')
     parsed = urlsplit(origin)
-    origins = {origin, 'http://testserver'}
+    origins = {origin}
+    if settings().database_url.startswith('sqlite'):
+        origins.add('http://testserver')
     if parsed.hostname in ('localhost', '127.0.0.1'):
         port = f':{parsed.port}' if parsed.port else ''
         origins.update({f'{parsed.scheme}://localhost{port}', f'{parsed.scheme}://127.0.0.1{port}'})

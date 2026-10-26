@@ -13,9 +13,14 @@ import {
 import { api } from "./api";
 import { Badge, ErrorBox } from "./ui";
 import { MessageBubble } from "./Conversations";
+import {
+  consumeEvents,
+  restoreSession,
+  type Credential,
+} from "./chatTransport";
 
-type Credential = { id: string; token: string };
 export function Chat() {
+  const [attempt, setAttempt] = useState(0);
   const [config, setConfig] = useState<any>(null),
     [credential, setCredential] = useState<Credential | null>(null),
     [messages, setMessages] = useState<any[]>([]),
@@ -99,24 +104,18 @@ export function Chat() {
             );
           } catch {}
         }
-        let c =
+        const savedCredential =
           saved &&
           typeof saved.id === "string" &&
           typeof saved.token === "string"
             ? saved
             : null;
-        let history: any = null;
-        if (c) {
-          try {
-            history = await api(`/widget/sessions/${c.id}`, {
-              headers: tokenHeaders(c),
-            });
-          } catch {
-            c = null;
-          }
-        }
-        if (!c) c = await create();
-        return { conf, c, history };
+        const restored = await restoreSession(
+          savedCredential,
+          (c) => api(`/widget/sessions/${c.id}`, { headers: tokenHeaders(c) }),
+          create,
+        );
+        return { conf, c: restored.credential, history: restored.history };
       })();
     init.current
       .then(({ conf, c, history }) => {
@@ -134,7 +133,7 @@ export function Chat() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [attempt]);
   useEffect(() => {
     if (!credential) return;
     const c = credential;
@@ -149,11 +148,9 @@ export function Chat() {
     }, 3500);
     return () => clearInterval(timer);
   }, [credential]);
-  useEffect(
-    () =>
-      bottom.current?.scrollIntoView({ block: "nearest", behavior: "auto" }),
-    [messages, messages[messages.length - 1]?.content, contactOpen],
-  );
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }, [messages, messages[messages.length - 1]?.content, contactOpen]);
   async function send(text = question) {
     if (!text.trim() || !credential || busy) return;
     setError("");
@@ -184,77 +181,68 @@ export function Chat() {
         throw new Error(result.detail || "发送失败，请稍后重试");
       }
       if (!response.body) throw new Error("浏览器不支持流式响应，请升级浏览器");
-      const reader = response.body.getReader(),
-        decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-        let boundary;
-        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-          const frame = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const kind = frame
-            .split("\n")
-            .find((l) => l.startsWith("event: "))
-            ?.slice(7);
-          const raw = frame
-            .split("\n")
-            .find((l) => l.startsWith("data: "))
-            ?.slice(6);
-          if (!raw) continue;
-          const item = JSON.parse(raw);
-          if (kind === "meta") {
+      await consumeEvents(response.body, (kind, item) => {
+        if (kind === "meta") {
+          added = true;
+          setMessages((old) => [
+            ...old,
+            {
+              id: assistantId,
+              role: "assistant",
+              content: "",
+              sources: item.sources,
+              mode: item.mode,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+        if (kind === "delta") {
+          if (!added) {
             added = true;
             setMessages((old) => [
               ...old,
-              {
-                id: assistantId,
-                role: "assistant",
-                content: "",
-                sources: item.sources,
-                mode: item.mode,
-                created_at: new Date().toISOString(),
-              },
+              { id: assistantId, role: "assistant", content: item.text },
             ]);
-          }
-          if (kind === "delta") {
-            if (!added) {
-              added = true;
-              setMessages((old) => [
-                ...old,
-                { id: assistantId, role: "assistant", content: item.text },
-              ]);
-            } else
-              setMessages((old) =>
-                old.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + item.text }
-                    : m,
-                ),
-              );
-          }
-          if (kind === "done") setStatus(item.status || "bot");
-          if (kind === "error") {
-            setError(item.message);
+          } else
             setMessages((old) =>
               old.map((m) =>
                 m.id === assistantId
-                  ? {
-                      ...m,
-                      state: "failed",
-                      content: m.content || "回答暂时未能完成。",
-                    }
+                  ? { ...m, content: m.content + item.text }
                   : m,
               ),
             );
-          }
         }
-        if (done) break;
-      }
+        if (kind === "done") setStatus(item.status || "bot");
+        if (kind === "error") {
+          setError(item.message);
+          setMessages((old) =>
+            old.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    state: "failed",
+                    content: m.content || "回答暂时未能完成。",
+                  }
+                : m,
+            ),
+          );
+        }
+      });
     } catch (e: any) {
       setError(e.message);
       if (!added) setQuestion(text);
+      else
+        setMessages((old) =>
+          old.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  state: "failed",
+                  content: m.content || "回答暂时未能完成。",
+                }
+              : m,
+          ),
+        );
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -453,7 +441,20 @@ export function Chat() {
             <small>您也可以不留联系方式，继续咨询公开课程信息。</small>
           </form>
         )}
-        {error && <ErrorBox text={error} />}
+        {error && (
+          <ErrorBox
+            text={error}
+            retry={
+              !credential
+                ? () => {
+                    init.current = null;
+                    setError("");
+                    setAttempt((v) => v + 1);
+                  }
+                : undefined
+            }
+          />
+        )}
         <div ref={bottom} />
       </div>
       <div className="chat-compose">
