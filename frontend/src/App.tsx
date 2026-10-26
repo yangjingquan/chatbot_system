@@ -1,0 +1,356 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { NavLink, Route, Routes, Link, useLocation } from "react-router-dom";
+import {
+  GraduationCap,
+  LayoutDashboard,
+  BookOpen,
+  MessagesSquare,
+  Users,
+  ContactRound,
+  ChartNoAxesCombined,
+  Bot,
+  Settings,
+  LogOut,
+  ExternalLink,
+  Menu,
+  X,
+  ChevronRight,
+  ShieldCheck,
+  RefreshCw,
+} from "lucide-react";
+import { api, useResource } from "./api";
+import { ErrorBox, Loading } from "./ui";
+import { Dashboard, Analytics } from "./Dashboard";
+import { Knowledge } from "./Knowledge";
+import { Conversations } from "./Conversations";
+import { Leads } from "./Leads";
+import { Configuration } from "./Configuration";
+
+const navigation = [
+  ["/", "工作台", LayoutDashboard],
+  ["/knowledge", "企业知识库", BookOpen],
+  ["/conversations", "咨询会话", MessagesSquare],
+  ["/leads", "咨询线索", Users],
+  ["/customers", "客户档案", ContactRound],
+  ["/analytics", "数据分析", ChartNoAxesCombined],
+  ["/robot", "机器人配置", Bot],
+  ["/settings", "企业设置", Settings],
+] as const;
+
+function Login({ onLogin }: { onLogin: (user: any) => void }) {
+  const [email, setEmail] = useState("admin@zhixing.local");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      onLogin(
+        await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        }),
+      );
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="login-layout">
+      <aside className="login-story">
+        <div className="brand">
+          <GraduationCap size={30} />
+          <span>知行客服</span>
+        </div>
+        <div>
+          <h1>
+            更懂学员的提问。
+            <br />
+            更有依据的回答。
+          </h1>
+          <p>
+            把企业知识、咨询服务与学员跟进连接起来，
+            <br />
+            让课程顾问把精力留给真正需要帮助的人。
+          </p>
+          <div className="login-path">
+            <span>知识</span>
+            <ChevronRight size={18} />
+            <span>咨询</span>
+            <ChevronRight size={18} />
+            <span>跟进</span>
+          </div>
+        </div>
+        <small>本地开发环境 · 培训机构演示资料</small>
+      </aside>
+      <main className="login-form">
+        <form onSubmit={submit}>
+          <div className="login-mark">
+            <GraduationCap size={26} />
+          </div>
+          <h2>登录工作台</h2>
+          <p>欢迎回来，继续处理您的咨询与学员需求。</p>
+          <label>
+            管理员邮箱
+            <input
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label>
+            登录密码
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          {error && <ErrorBox text={error} />}
+          <button className="button full" disabled={busy}>
+            {busy ? "正在登录…" : "登录工作台"}
+          </button>
+          <div className="login-help">
+            <ShieldCheck size={18} />
+            <span>
+              初始密码保存在本地项目 .env 文件的
+              ADMIN_PASSWORD，密钥不会发送到浏览器。
+            </span>
+          </div>
+          <Link to="/demo" className="text-link">
+            先体验官网智能客服 <ExternalLink size={14} />
+          </Link>
+        </form>
+      </main>
+    </div>
+  );
+}
+
+export function App() {
+  const [user, setUser] = useState<any>(null);
+  const [checking, setChecking] = useState(true);
+  const [mobile, setMobile] = useState(false);
+  const [includeDemo, setIncludeDemo] = useState(true);
+  const [version, setVersion] = useState(0);
+  const config = useResource<any>("/admin/settings", user ? version : -1);
+  const location = useLocation();
+  useEffect(() => {
+    api("/auth/me")
+      .then(setUser)
+      .catch(() => {})
+      .finally(() => setChecking(false));
+    const expire = () => setUser(null);
+    window.addEventListener("session-expired", expire);
+    return () => window.removeEventListener("session-expired", expire);
+  }, []);
+  useEffect(() => setMobile(false), [location.pathname]);
+  const refresh = () => setVersion((v) => v + 1);
+  if (checking) return <Loading />;
+  if (!user) return <Login onLogin={setUser} />;
+  return (
+    <div className="app-shell">
+      <aside className={"sidebar " + (mobile ? "open" : "")}>
+        <Link to="/" className="brand">
+          <div className="brand-symbol">
+            <GraduationCap size={24} />
+          </div>
+          <div>
+            知行客服<small>培训机构工作台</small>
+          </div>
+        </Link>
+        <button
+          className="icon-button mobile-close"
+          aria-label="关闭导航"
+          onClick={() => setMobile(false)}
+        >
+          <X size={20} />
+        </button>
+        <div className="company-switch">
+          <span className="company-avatar">知</span>
+          <div>
+            <strong>{config.data?.company_name || "知行公考"}</strong>
+            <small>单企业 · 本地环境</small>
+          </div>
+          <ChevronRight size={14} />
+        </div>
+        <nav aria-label="主导航">
+          {navigation.map(([to, label, Icon]) => (
+            <NavLink key={to} to={to} end={to === "/"}>
+              <Icon size={19} />
+              <span>{label}</span>
+              {to === "/robot" && <span className="nav-new">AI</span>}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="service-status">
+            <span
+              className={
+                "status-dot " +
+                (config.data?.model_configured ? "green" : "amber")
+              }
+            />
+            <div>
+              <strong>
+                {config.data?.model_configured
+                  ? "DeepSeek 已配置"
+                  : "资料摘录模式"}
+              </strong>
+              <small>
+                {config.data?.model_configured
+                  ? "服务端安全接入"
+                  : "接入 Key 后启用智能回答"}
+              </small>
+            </div>
+          </div>
+          <button
+            className="user-button"
+            onClick={async () => {
+              await api("/auth/logout", { method: "POST" });
+              setUser(null);
+            }}
+          >
+            <span className="avatar">管</span>
+            <div>
+              <strong>{user.name}</strong>
+              <small>退出登录</small>
+            </div>
+            <LogOut size={16} />
+          </button>
+        </div>
+      </aside>
+      {mobile && (
+        <button
+          className="nav-backdrop"
+          aria-label="关闭导航"
+          onClick={() => setMobile(false)}
+        />
+      )}
+      <div className="main-shell">
+        <header className="topbar">
+          <div className="breadcrumb">
+            <button
+              className="icon-button mobile-menu"
+              aria-label="打开导航"
+              onClick={() => setMobile(true)}
+            >
+              <Menu size={20} />
+            </button>
+            <span>运营空间</span>
+            <ChevronRight size={14} />
+            <strong>
+              {navigation.find((n) => n[0] === location.pathname)?.[1] ||
+                "工作台"}
+            </strong>
+          </div>
+          <div className="topbar-actions">
+            <span className="local-label">
+              <span className="status-dot green" />
+              本地运行
+            </span>
+            <a
+              href="/demo"
+              target="_blank"
+              rel="noreferrer"
+              className="button secondary small"
+            >
+              <ExternalLink size={15} />
+              官网演示
+            </a>
+            <button
+              aria-label="刷新数据"
+              className="icon-button"
+              onClick={refresh}
+            >
+              <RefreshCw size={18} />
+            </button>
+          </div>
+        </header>
+        <main className="workspace">
+          <div className="environment-banner">
+            <div>
+              <span className="sample-square" />
+              演示环境
+              <span className="banner-description">
+                机构、课程价格及种子记录为虚构资料；考试政策以官方公告为准。
+              </span>
+            </div>
+            <label className="toggle-label">
+              <input
+                type="checkbox"
+                checked={includeDemo}
+                onChange={(e) => setIncludeDemo(e.target.checked)}
+              />
+              包含演示记录
+            </label>
+          </div>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <Dashboard includeDemo={includeDemo} version={version} />
+              }
+            />
+            <Route
+              path="/knowledge"
+              element={<Knowledge version={version} onChange={refresh} />}
+            />
+            <Route
+              path="/conversations"
+              element={
+                <Conversations includeDemo={includeDemo} version={version} />
+              }
+            />
+            <Route
+              path="/leads"
+              element={<Leads includeDemo={includeDemo} version={version} />}
+            />
+            <Route
+              path="/customers"
+              element={
+                <Leads includeDemo={includeDemo} version={version} customers />
+              }
+            />
+            <Route
+              path="/analytics"
+              element={
+                <Analytics includeDemo={includeDemo} version={version} />
+              }
+            />
+            <Route
+              path="/robot"
+              element={
+                <Configuration robot version={version} onChange={refresh} />
+              }
+            />
+            <Route
+              path="/settings"
+              element={<Configuration version={version} onChange={refresh} />}
+            />
+            <Route
+              path="*"
+              element={
+                <div className="empty">
+                  <h2>页面不存在</h2>
+                  <Link to="/">返回工作台</Link>
+                </div>
+              }
+            />
+          </Routes>
+        </main>
+        <footer className="workspace-footer">
+          <span>知行客服 · 每一次回答，都有据可循</span>
+          <span>本地开发版 v0.1</span>
+        </footer>
+      </div>
+    </div>
+  );
+}

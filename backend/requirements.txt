@@ -13,3 +13,4 @@ python-docx>=1.1,<2
 jieba>=0.42.1,<1
 fastembed>=0.6,<1
 pytest>=8,<10
+cryptography>=44,<48

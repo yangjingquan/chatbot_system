@@ -1,0 +1,211 @@
+[
+  {
+    "id": "01-institution",
+    "title": "知行公考机构与服务介绍",
+    "category": "机构介绍",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "01-institution.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-police",
+    "title": "公安联考课程与咨询指南",
+    "category": "公安联考",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-police.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-national",
+    "title": "公务员国考课程与咨询指南",
+    "category": "公务员国考",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-national.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-provincial",
+    "title": "公务员省考课程与咨询指南",
+    "category": "公务员省考",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-provincial.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-selected",
+    "title": "选调生考试课程与咨询指南",
+    "category": "选调生考试",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-selected.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-public",
+    "title": "事业单位考试课程与咨询指南",
+    "category": "事业单位考试",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-public.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-social-police",
+    "title": "社会招警课程与咨询指南",
+    "category": "社会招警",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-social-police.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-auxiliary",
+    "title": "辅警招聘课程与咨询指南",
+    "category": "辅警招聘",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-auxiliary.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "course-community",
+    "title": "社区工作者考试课程与咨询指南",
+    "category": "社区工作者考试",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "course-community.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "10-price",
+    "title": "课程价格表与报价规则",
+    "category": "价格与报名",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "10-price.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "11-learning",
+    "title": "授课方式、学习规划与基础评估",
+    "category": "学习服务",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "11-learning.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "12-trial",
+    "title": "试听预约与课程报名流程",
+    "category": "价格与报名",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "12-trial.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "13-refund",
+    "title": "退费、转班、延期与发票咨询",
+    "category": "课务售后",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "13-refund.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "14-police-difference",
+    "title": "公安联考、社会招警与辅警的区别",
+    "category": "考试基础",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": "https://www.moe.gov.cn/jyb_xxgk/moe_1777/moe_1779/201603/t20160316_233754.html",
+    "filename": "14-police-difference.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "15-exam-policy",
+    "title": "考试公告核验与报考咨询边界",
+    "category": "考试基础",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": "https://www.scs.gov.cn/",
+    "filename": "15-exam-policy.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "16-selected-public",
+    "title": "选调生、事业单位与社区岗位性质说明",
+    "category": "考试基础",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "16-selected-public.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "17-privacy",
+    "title": "咨询留资、个人信息与联系说明",
+    "category": "服务规则",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "17-privacy.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "18-support",
+    "title": "人工客服、投诉与课务处理",
+    "category": "课务售后",
+    "visibility": "public",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "18-support.md",
+    "reviewed_on": "2026-10-26"
+  },
+  {
+    "id": "19-sales-playbook",
+    "title": "内部顾问分配与跟进示例",
+    "category": "内部运营",
+    "visibility": "internal",
+    "status": "published",
+    "is_demo": true,
+    "source_url": null,
+    "filename": "19-sales-playbook.md",
+    "reviewed_on": "2026-10-26"
+  }
+]
