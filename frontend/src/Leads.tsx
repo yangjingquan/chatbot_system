@@ -11,9 +11,10 @@ import {
   LockKeyhole,
 } from "lucide-react";
 import { api, date, useResource } from "./api";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Filters, Pager, usePaged, localTime, isoTime } from "./lists";
 import { StudentAssociation } from "./Students";
+import { trialLabels } from "./Reception";
 import { useAccess } from "./auth";
 import {
   Badge,
@@ -444,8 +445,32 @@ export function Leads({
               </button>
             )}
             <h3>
-              意向证据 <small>规则分数 {detail.score} / 100</small>
+              意向证据{" "}
+              <small>
+                规则分数 {detail.score} / 100 · 仅作跟进辅助
+              </small>
             </h3>
+            {(detail.score_meta?.uncertainty ||
+              detail.score_meta?.confidence) && (
+              <p className="footnote">
+                {detail.score_meta?.confidence
+                  ? `置信：${
+                      (
+                        {
+                          high: "较高",
+                          medium: "中等",
+                          low: "较低",
+                        } as Record<string, string>
+                      )[detail.score_meta.confidence] ||
+                      detail.score_meta.confidence
+                    }。`
+                  : ""}
+                {detail.score_meta?.uncertainty || ""}
+                {detail.manual_level
+                  ? " 当前为人工确认等级，自动规则不会覆盖。"
+                  : " 可随时人工改级或恢复自动分级。"}
+              </p>
+            )}
             {detail.evidence.length ? (
               detail.evidence.map((e: any, i: number) => (
                 <blockquote className="evidence" key={i}>
@@ -466,6 +491,23 @@ export function Leads({
                 r.reload();
               }}
             />
+            <h3>试听记录</h3>
+            {detail.trials?.length ? (
+              detail.trials.map((t: any) => (
+                <article className="revision-row" key={t.id}>
+                  <Link className="text-link" to={"/trials"}>
+                    {t.course_name} · {trialLabels[t.status] || t.status}
+                  </Link>
+                  <small>
+                    意向 {date(t.requested_at, true)}
+                    {t.scheduled_at ? ` · 确认 ${date(t.scheduled_at, true)}` : ""}
+                    {t.reason ? ` · 原因：${t.reason}` : ""}
+                  </small>
+                </article>
+              ))
+            ) : (
+              <p className="footnote">本线索尚无试听申请。</p>
+            )}
             <h3>添加跟进</h3>
             <textarea
               aria-label="跟进记录内容"

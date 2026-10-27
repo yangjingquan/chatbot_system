@@ -102,10 +102,12 @@ def test_gap_and_list_preview_redact_but_message_kept(admin,monkeypatch):
     assert PHONE in user['content']  # original kept for staff/CRM conversation detail
     answer=next(m for m in history['messages'] if m['role']=='assistant')
     # Make the latest list preview a user message that contains PII.
+    # Unique q= marker keeps the row visible after large synthetic waiting queues.
+    marker='隐私列表'+uuid.uuid4().hex[:8]
     with SessionLocal() as db:
-        db.add(Message(conversation_id=c['id'],role='user',content=f'补充联系方式{PHONE}'))
+        db.add(Message(conversation_id=c['id'],role='user',content=f'补充联系方式{PHONE} {marker}'))
         db.commit()
-    listing=admin.get('/api/admin/conversations').json()
+    listing=admin.get('/api/admin/conversations',params={'page_size':100,'q':marker}).json()
     row=next(item for item in listing['items'] if item['id']==c['id'])
     assert PHONE not in row['last_message']
     assert '138****8000' in row['last_message']

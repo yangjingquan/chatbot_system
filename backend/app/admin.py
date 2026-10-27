@@ -1,7 +1,6 @@
 import csv
 import io
-from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -33,15 +32,25 @@ def lead_data(l):
             ('id','conversation_id','student_id','next_followup_at','name','contact','contact_verified','contact_allowed','level','score','purpose','tags','evidence','stage','owner','owner_id','manual_level','is_demo','created_at','updated_at')}
 
 def conversation_data(db, c, full=False, user=None):
-    from .reception import unread
-    from .privacy import redact_text
-    messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
-    preview=redact_text(messages[-1].content)[:120] if messages else ''
+    from .reception import unread, waiting_seconds, is_timed_out, reception_config
+    from .analytics import last_message_preview
+    if full:
+        messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
+        from .privacy import redact_text
+        preview = redact_text(messages[-1].content)[:120] if messages else ''
+        message_count = len(messages)
+    else:
+        preview, message_count = last_message_preview(db, c.id)
+        messages = None
     result = {'id':c.id, 'visitor_name':c.visitor_name, 'source_page':c.source_page, 'status':c.status,
               'analysis':c.analysis, 'assigned_to_id':c.assigned_to_id, 'is_demo':c.is_demo, 'created_at':c.created_at.isoformat(), 'updated_at':c.updated_at.isoformat(),
-              'last_message':preview, 'message_count':len(messages)}
+              'last_message':preview, 'message_count':message_count}
     result['unread_count']=unread(db,c,user)
     result['waiting_since']=c.waiting_since.isoformat() if c.waiting_since else None
+    result['waiting_seconds']=waiting_seconds(c)
+    cfg=reception_config(db,c.tenant_id)
+    result['timed_out']=is_timed_out(c,cfg['wait_timeout_seconds'])
+    result['handoff_note']=getattr(c,'handoff_note','') or ''
     assignee=db.get(Admin,c.assigned_to_id) if c.assigned_to_id else None
     result['assigned_name']=assignee.name if assignee else '未分配'
     if full:
@@ -116,6 +125,10 @@ class ConfigPatch(BaseModel):
     service_hours: str | None = Field(None,max_length=100)
     suggested_questions: list[str] | None = Field(None,max_length=6)
     allowed_embed_origins: list[str] | None = Field(None,max_length=30)
+    reception_assign_mode: Literal['manual','least_busy'] | None = None
+    reception_max_active: int | None = Field(None,ge=1,le=50)
+    reception_wait_timeout_seconds: int | None = Field(None,ge=30,le=86400)
+    canned_replies: list[dict] | None = Field(None,max_length=40)
 
 @router.patch('/admin/settings')
 def update_settings(data: ConfigPatch, user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
@@ -124,6 +137,15 @@ def update_settings(data: ConfigPatch, user: Admin = Depends(require('settings.w
         raise HTTPException(422,'推荐问题不能超过 150 字')
     if 'allowed_embed_origins' in values:
         values['allowed_embed_origins'] = validate_embed_origin_list(values['allowed_embed_origins'])
+    if 'canned_replies' in values:
+        from .models import uid as new_uid
+        cleaned=[]
+        for item in values['canned_replies'] or []:
+            title=str(item.get('title') or '').strip()[:40]
+            content=str(item.get('content') or '').strip()[:1000]
+            if not title or not content:raise HTTPException(422,'常用回复需要标题和正文')
+            cleaned.append({'id':str(item.get('id') or new_uid())[:36],'title':title,'content':content})
+        values['canned_replies']=cleaned
     company = db.get(Company,user.tenant_id)
     company.config = {**company.config, **values}
     record(db,user,'更新企业或机器人设置')
@@ -151,19 +173,37 @@ def mark_demo(sid: str, user: Admin = Depends(require('settings.write')), db: Se
 
 @router.post('/admin/conversations/{sid}/takeover')
 def takeover(sid: str, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
-    from .reception import lock_conversation
+    from .reception import lock_conversation, active_human_count, reception_config
+    from sqlalchemy import update as sa_update, or_
     conv = lock_conversation(db,sid,user)
+    if conv.status=='closed':
+        raise HTTPException(409,'咨询已结束，无法接管')
+    if conv.assigned_to_id==user.id and conv.status=='human':
+        return {'status':'human','assigned_to_id':user.id}
+    cfg=reception_config(db,user.tenant_id)
+    claiming_new=not conv.assigned_to_id or conv.assigned_to_id!=user.id
+    if claiming_new and active_human_count(db,user.id)>=cfg['max_active'] and user.role!='admin':
+        raise HTTPException(409,f'当前接待数已达上限 {cfg["max_active"]}，请先结束或转交会话')
     if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
         raise HTTPException(409,'此咨询正由其他员工接待，请由管理员调整接待人')
-    conv.status = 'human'
-    conv.assigned_to_id = user.id
-    conv.waiting_since = None
+    # Conditional update keeps concurrent claims mutually exclusive even if row locks are weak.
+    if user.role=='admin' and conv.assigned_to_id and conv.assigned_to_id!=user.id:
+        conv.status='human';conv.assigned_to_id=user.id;conv.waiting_since=None;conv.updated_at=now()
+    else:
+        result=db.execute(sa_update(Conversation).where(
+            Conversation.id==sid,
+            or_(Conversation.assigned_to_id.is_(None),Conversation.assigned_to_id==user.id)
+        ).values(status='human',assigned_to_id=user.id,waiting_since=None,updated_at=now()))
+        if result.rowcount==0:
+            raise HTTPException(409,'此咨询正由其他员工接待，请刷新后重试')
+        db.refresh(conv)
     record(db,user,'接管咨询',sid)
     db.commit()
-    return {'status':conv.status}
+    return {'status':'human','assigned_to_id':user.id}
 
 class TextInput(BaseModel):
     content: str = Field(min_length=1,max_length=4000)
+    client_id: str | None = Field(None,min_length=8,max_length=80,pattern=r'^[A-Za-z0-9_-]+$')
 
 @router.post('/admin/conversations/{sid}/reply')
 def reply(sid: str, data: TextInput, user: Admin = Depends(require('conversations.handle')), db: Session = Depends(get_db)):
@@ -172,7 +212,10 @@ def reply(sid: str, data: TextInput, user: Admin = Depends(require('conversation
     if conv.status != 'human': raise HTTPException(409,'请先接管此咨询')
     if conv.assigned_to_id and conv.assigned_to_id!=user.id and user.role!='admin':
         raise HTTPException(409,'此咨询由其他员工接待，请先申请接管')
-    msg = Message(conversation_id=sid,role='agent',content=data.content,mode='human')
+    if data.client_id:
+        existing=db.scalar(select(Message).where(Message.conversation_id==sid,Message.client_id==data.client_id))
+        if existing:return message_data(existing)
+    msg = Message(conversation_id=sid,role='agent',content=data.content,mode='human',client_id=data.client_id)
     db.add(msg)
     conv.updated_at = now()
     db.commit()
@@ -190,6 +233,8 @@ def change_status(sid: str, data: StatusInput, user: Admin = Depends(require('co
     conv.status = data.status
     conv.assigned_to_id = None
     conv.waiting_since = None
+    if data.status!='human':
+        conv.handoff_note = ''
     record(db,user,'调整接待状态',sid)
     db.commit()
     return {'status':conv.status}
@@ -216,7 +261,18 @@ def export_leads(filters:BusinessFilters=Depends(),user:Admin=Depends(require('l
 @router.get('/admin/leads/{lead_id}')
 def lead_detail(lead_id: str, user: Admin = Depends(require('leads.read')), db: Session = Depends(get_db)):
     lead = owned(db,Lead,lead_id,user)
-    return {**lead_data(lead),'followups':[{'id':f.id,'author':f.author,'content':f.content,'created_at':f.created_at.isoformat()} for f in db.scalars(select(FollowUp).where(FollowUp.lead_id == lead.id).order_by(FollowUp.created_at.desc()))]}
+    from .models import Trial
+    from .reception import trial_data
+    trials=[trial_data(db,t) for t in db.scalars(select(Trial).where(Trial.conversation_id==lead.conversation_id).order_by(Trial.created_at.desc()))]
+    analysis=(db.get(Conversation,lead.conversation_id).analysis or {}) if lead.conversation_id else {}
+    score_meta={
+        'score_role':analysis.get('score_role') or 'followup_assist',
+        'classifier':analysis.get('classifier') or 'rules',
+        'confidence':analysis.get('confidence'),
+        'uncertainty':analysis.get('uncertainty'),
+        'rule_version':analysis.get('rule_version'),
+    }
+    return {**lead_data(lead),'followups':[{'id':f.id,'author':f.author,'content':f.content,'created_at':f.created_at.isoformat()} for f in db.scalars(select(FollowUp).where(FollowUp.lead_id == lead.id).order_by(FollowUp.created_at.desc()))],'trials':trials,'score_meta':score_meta}
 
 class LeadPatch(BaseModel):
     owner: str | None = Field(None,max_length=80)
@@ -274,50 +330,49 @@ def followup(lead_id: str, data: TextInput, user: Admin = Depends(require('leads
 
 @router.get('/admin/overview')
 def overview(filters:BusinessFilters=Depends(),user:Admin=Depends(require('analytics.read')),db:Session=Depends(get_db)):
-    from zoneinfo import ZoneInfo
-    from datetime import timezone
-    def business_date(value):
-        aware=value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
-        return aware.astimezone(ZoneInfo('Asia/Shanghai')).date()
-    cs = db.scalars(conversation_query(db,user,filters)).all()
-    ls = db.scalars(lead_query(db,user,filters)).all()
-    docs = db.scalars(select(Document).where(Document.tenant_id == user.tenant_id)).all()
-    ids = [c.id for c in cs]
-    messages = db.scalars(select(Message).where(Message.conversation_id.in_(ids))).all() if ids else []
-    engaged={m.conversation_id for m in messages if m.role=='user'}|{l.conversation_id for l in ls}
-    cs=[c for c in cs if c.id in engaged]
-    contacted=set(db.scalars(select(Lead.conversation_id).where(Lead.conversation_id.in_([c.id for c in cs]),Lead.tenant_id==user.tenant_id))) if cs else set()
-    trend=[]
-    for i in range(6,-1,-1):
-        day = business_date(now() - timedelta(days=i))
-        trend.append({'date':day.isoformat(),'conversations':sum(business_date(c.created_at)==day for c in cs),'leads':sum(business_date(l.created_at)==day for l in ls)})
+    from .analytics import (
+        METRIC_DEFINITIONS, build_overview_counts, trend_series, lead_level_counts, exam_lead_counts,
+        knowledge_gap_rows, message_usage, first_agent_reply_latency, document_counts,
+    )
     from .privacy import redact_text
-    gaps = [{'question':redact_text(m.content)[:160],'created_at':m.created_at.isoformat()} for m in messages if m.role=='user' and any(a.reply_to==m.id and a.mode=='unknown' for a in messages)]
-    from .document_service import document_active
-    from .students import todo_query,student_query
+    from .students import todo_query, student_query
     from .querying import count
-    tasks=todo_query(db,user,filters)
-    from .scoring import EXAMS
-    related={c.id:c for c in db.scalars(select(Conversation).where(Conversation.tenant_id==user.tenant_id,Conversation.id.in_([l.conversation_id for l in ls])))} if ls else {}
-    exam_counts=Counter()
-    for lead in ls:
-        analysis=related[lead.conversation_id].analysis if lead.conversation_id in related else {}
-        names=set(lead.tags)|set(analysis.get('active_exam_types',[]))|{n.get('exam_type') for n in analysis.get('needs',[]) if n.get('state')=='active'}
-        exam_counts.update(sorted(names.intersection(EXAMS)))
-    return {'include_demo':filters.include_demo,'filters':filters.model_dump(mode='json'),
-            'counts':{'conversations':len(cs),'leads':len(ls),'contacted_conversations':len(contacted),'high_intent':sum(l.level=='高意向' for l in ls),
-                      'documents':len(docs),'published':sum(document_active(d) and d.visibility=='public' for d in docs),
-                      'pending':sum(l.stage in ('新线索','待分配') for l in ls),'handoffs':sum(c.status=='waiting' for c in cs),
-                      'customers':sum(l.stage=='已成交' for l in ls),
-                      'qualified':sum(l.stage in ('已合格','商机推进','已成交') for l in ls)},
-            'student_count':count(db,student_query(db,user,filters)),
-            'todo_count':count(db,tasks),'todos':[lead_data(l) for l in db.scalars(tasks.limit(5))],
-            'trend':trend,'intent':[{'name':k,'value':v} for k,v in Counter(l.level for l in ls).items()],
-            'exams':[{'name':k,'value':v} for k,v in exam_counts.items()],
-            'recent_conversations':[conversation_data(db,c) for c in sorted(cs,key=lambda c:c.updated_at,reverse=True)[:5]],
-            'recent_leads':[lead_data(l) for l in sorted(ls,key=lambda l:l.created_at,reverse=True)[:5]],
-            'knowledge_gaps':gaps[:20], 'usage':{'total_tokens':sum(m.usage.get('total_tokens',0) for m in messages),'deepseek_answers':sum(m.mode=='deepseek' for m in messages)},
-            'retrieval':retrieval_status(), 'model_configured':bool(settings().deepseek_api_key)}
+    from .knowledge_maintenance import sync_expiry_todos, list_knowledge_todos, todo_data
+    counts = build_overview_counts(db, user, filters)
+    doc_stats = document_counts(db, user.tenant_id)
+    tasks = todo_query(db, user, filters)
+    sync_expiry_todos(db, user.tenant_id)
+    knowledge_tasks = list_knowledge_todos(db, user, status='open')
+    recent_cs = db.scalars(
+        conversation_query(db, user, filters).order_by(Conversation.updated_at.desc(), Conversation.id.desc()).limit(5)
+    ).all()
+    recent_ls = db.scalars(
+        lead_query(db, user, filters).order_by(Lead.created_at.desc(), Lead.id.desc()).limit(5)
+    ).all()
+    gaps = knowledge_gap_rows(db, user, filters)
+    reply = first_agent_reply_latency(db, user, filters)
+    return {
+        'include_demo': filters.include_demo,
+        'filters': filters.model_dump(mode='json'),
+        'metric_definitions': METRIC_DEFINITIONS,
+        'counts': counts,
+        'student_count': count(db, student_query(db, user, filters)),
+        'todo_count': count(db, tasks),
+        'todos': [lead_data(l) for l in db.scalars(tasks.limit(5))],
+        'knowledge_todo_count': count(db, knowledge_tasks),
+        'knowledge_todos': [todo_data(db, t) for t in db.scalars(knowledge_tasks.limit(5))],
+        'expired_documents': doc_stats['expired_documents'],
+        'trend': trend_series(db, user, filters),
+        'intent': lead_level_counts(db, user, filters),
+        'exams': exam_lead_counts(db, user, filters),
+        'recent_conversations': [conversation_data(db, c, user=user) for c in recent_cs],
+        'recent_leads': [lead_data(l) for l in recent_ls],
+        'knowledge_gaps': [{'question': redact_text(m.content)[:160], 'created_at': m.created_at.isoformat()} for m in gaps],
+        'usage': message_usage(db, user, filters),
+        'reply_latency': reply,
+        'retrieval': retrieval_status(),
+        'model_configured': bool(settings().deepseek_api_key),
+    }
 
 @router.get('/admin/audit')
 def audit(filters:BusinessFilters=Depends(),paging:Paging=Depends(),user:Admin=Depends(require('audit.read')),db:Session=Depends(get_db)):

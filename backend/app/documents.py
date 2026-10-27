@@ -9,7 +9,7 @@ from .db import get_db
 from .models import Admin, Document, DocumentRevision, Chunk, now
 from .querying import BusinessFilters, Paging, common, paginate
 from .permissions import require, scoped_object
-from .knowledge import parse_file, retrieve, retrieval_status
+from .knowledge import parse_file, retrieve, retrieval_status, MAX_FILE_BYTES
 from . import document_service as service
 
 router=APIRouter(prefix='/admin')
@@ -62,11 +62,12 @@ def responsibles(user:Admin=Depends(require('knowledge.read')),db:Session=Depend
     return [{'id':a.id,'name':a.name,'role':a.role} for a in db.scalars(select(Admin).where(Admin.tenant_id==user.tenant_id,Admin.is_active.is_(True),Admin.role.in_(['admin','knowledge'])).order_by(Admin.name))]
 
 @router.get('/documents')
-def documents(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:str='',include_demo:bool=True,user:Admin=Depends(require('knowledge.read')),db:Session=Depends(get_db)):
+def documents(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:str='',visibility:str='',include_demo:bool=True,user:Admin=Depends(require('knowledge.read')),db:Session=Depends(get_db)):
     query=common(select(Document).where(Document.tenant_id==user.tenant_id),Document,filters.model_copy(update={'include_demo':include_demo}))
     def working(field):
         draft=select(DocumentRevision.data[field].as_string()).where(DocumentRevision.document_id==Document.id,DocumentRevision.status.in_(['draft','submitted'])).order_by(DocumentRevision.number.desc()).limit(1).scalar_subquery()
         return func.coalesce(draft,getattr(Document,field))
+    if visibility in ('public','internal'):query=query.where(working('visibility')==visibility)
     if filters.q:query=query.where(working('title').contains(filters.q,autoescape=True))
     if filters.exam_type:query=query.where(working('exam_type')==filters.exam_type)
     if filters.owner_id:query=query.where(working('responsible_id')==filters.owner_id)
@@ -80,7 +81,7 @@ def documents(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:s
 
 @router.post('/documents/upload')
 def upload(file:UploadFile=File(...),user:Admin=Depends(require('knowledge.write')),db:Session=Depends(get_db)):
-    content=parse_file(file.filename or '',file.file.read(5*1024*1024+1))
+    content=parse_file(file.filename or '',file.file.read(MAX_FILE_BYTES+1))
     doc=service.create_document(db,{'title':Path(file.filename or '上传知识').stem[:240],'content':content},user)
     db.commit();return serialize(db,doc)
 
@@ -121,6 +122,27 @@ def revision(doc_id:str,revision_id:str,user:Admin=Depends(require('knowledge.re
     row=db.get(DocumentRevision,revision_id)
     if not row or row.document_id!=doc_id or row.tenant_id!=user.tenant_id:raise HTTPException(404,'版本不存在')
     return service.revision_data(row,True)
+
+
+class KnowledgeTodoAction(BaseModel):
+    action:Literal['done','dismissed']='done'
+
+@router.get('/knowledge-todos')
+def knowledge_todos(paging:Paging=Depends(),status:str='open',kind:str='',mine:bool=False,user:Admin=Depends(require('knowledge.read')),db:Session=Depends(get_db)):
+    from .knowledge_maintenance import sync_expiry_todos, list_knowledge_todos, todo_data
+    sync_expiry_todos(db,user.tenant_id)
+    db.commit()
+    query=list_knowledge_todos(db,user,status=status or 'open',kind=kind,mine=mine)
+    return paginate(db,query,paging,lambda t:todo_data(db,t))
+
+@router.post('/knowledge-todos/{todo_id}/complete')
+def complete_todo(todo_id:str,data:KnowledgeTodoAction,user:Admin=Depends(require('knowledge.write')),db:Session=Depends(get_db)):
+    from .knowledge_maintenance import complete_knowledge_todo, todo_data, sync_expiry_todos
+    sync_expiry_todos(db,user.tenant_id)
+    todo=complete_knowledge_todo(db,todo_id,user,data.action)
+    from .admin import record
+    record(db,user,'处理知识到期待办',todo_id)
+    db.commit();return todo_data(db,todo)
 
 class RetrievalInput(BaseModel):
     query:str=Field(min_length=1,max_length=1000)

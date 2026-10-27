@@ -92,6 +92,7 @@ class Conversation(Base):
     status: Mapped[str] = mapped_column(String(24), default='bot')
     assigned_to_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    handoff_note: Mapped[str] = mapped_column(Text, default='')
     analysis: Mapped[dict] = mapped_column(JSON, default=dict)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -230,6 +231,7 @@ class Trial(Base):
     advisor_id: Mapped[str | None] = mapped_column(ForeignKey('admins.id'), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default='pending', index=True)
     note: Mapped[str] = mapped_column(Text, default='')
+    reason: Mapped[str] = mapped_column(Text, default='')  # cancel / no_show reason
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
@@ -330,6 +332,23 @@ class Alert(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ack_by: Mapped[str] = mapped_column(String(100), default='')
     notify_state: Mapped[str] = mapped_column(String(24), default='pending')  # pending | skipped | queued | sent | failed
+
+
+class KnowledgeTodo(Base):
+    """Expiry / review reminders for knowledge owners."""
+    __tablename__ = 'knowledge_todos'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey('documents.id'), index=True)
+    responsible_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)  # expiring_soon | expired
+    status: Mapped[str] = mapped_column(String(16), default='open', index=True)  # open | done | dismissed
+    title: Mapped[str] = mapped_column(String(240))
+    message: Mapped[str] = mapped_column(Text, default='')
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_by: Mapped[str] = mapped_column(String(100), default='')
 
 
 class PrivacyRequest(Base):

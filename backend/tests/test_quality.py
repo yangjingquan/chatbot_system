@@ -2,7 +2,7 @@ import uuid
 import httpx
 from sqlalchemy import select
 from app.db import SessionLocal
-from app.models import Message, Conversation
+from app.models import Message, Conversation, Company
 
 def answer(admin):
     c=admin.post('/api/widget/sessions',json={}).json()
@@ -81,3 +81,105 @@ def test_stream_failure_is_classified_and_usage_is_unknown_not_zero(admin,monkey
     call=usage['recent'][0]
     assert call['error_type']=='timeout' and call['state']=='failed'
     assert call['estimated_cny'] is None and call['usage']=={}
+
+
+def test_usage_unknown_without_pricing_or_tokens(admin):
+    with SessionLocal() as db:
+        company=db.scalars(select(Company)).first()
+        cfg={k:v for k,v in (company.config or {}).items() if k!='_budget'}
+        company.config=cfg
+        db.commit()
+    summary=admin.get('/api/admin/quality/usage').json()
+    assert summary['pricing_ready'] is False
+    assert summary['daily_estimated_cny'] is None
+    assert summary['monthly_estimated_cny'] is None
+    assert '未知' in summary['billing_note'] or '不自动' in summary['billing_note']
+    assert summary['enforce_over_budget'] is False
+    assert summary['reconciliation']['estimated_cny_sum'] is None
+    c,mid=answer(admin)
+    with SessionLocal() as db:
+        from app.quality import record_usage
+        m=db.get(Message,mid);m.mode='deepseek';m.usage={}
+        record_usage(db,m,'any-model',10,'');db.commit()
+    summary=admin.get('/api/admin/quality/usage').json()
+    call=next(r for r in summary['recent'] if r['message_id']==mid)
+    assert call['estimated_cny'] is None
+    assert call['cost_display']=='未知'
+    assert call['usage']=={}
+
+
+def test_priced_call_estimates_and_trend(admin):
+    config={'model':'bill-model','input_miss':1,'input_hit':0.5,'output':2,'daily_budget':100,'monthly_budget':1000,'enforce_over_budget':False}
+    assert admin.put('/api/admin/quality/budget',json=config).status_code==200
+    c,mid=answer(admin)
+    with SessionLocal() as db:
+        from app.quality import record_usage
+        m=db.get(Message,mid);m.mode='deepseek'
+        m.usage={'prompt_tokens':1000000,'completion_tokens':500000,'total_tokens':1500000,'prompt_cache_hit_tokens':0}
+        record_usage(db,m,'bill-model',88,'');db.commit()
+    summary=admin.get('/api/admin/quality/usage').json()
+    assert summary['pricing_ready'] is True
+    assert summary['daily_estimated_cny'] is not None
+    assert summary['daily_estimated_cny']>=2.0
+    assert summary['enforce_over_budget'] is False
+    assert summary['currently_degraded'] is False
+    assert any(row['priced_calls']>=1 for row in summary['trend_daily'])
+    assert summary['reconciliation']['priced_calls']>=1
+    call=next(r for r in summary['recent'] if r['message_id']==mid)
+    assert call['estimated_cny']==2.0
+    assert call['cost_display'].startswith('¥')
+
+
+def test_budget_degrade_requires_explicit_enable(admin,monkeypatch):
+    import app.chat as chat
+    from app.config import settings
+    from app.quality import should_degrade_for_budget
+    # Seed enough priced spend to exceed a tiny daily budget.
+    config={'model':'gate-model','input_miss':2,'input_hit':1,'output':4,'daily_budget':1,'monthly_budget':100,'enforce_over_budget':False}
+    assert admin.put('/api/admin/quality/budget',json=config).status_code==200
+    c,mid=answer(admin)
+    with SessionLocal() as db:
+        from app.quality import record_usage
+        m=db.get(Message,mid);m.mode='deepseek'
+        m.usage={'prompt_tokens':1000000,'completion_tokens':100000,'total_tokens':1100000}
+        record_usage(db,m,'gate-model',20,'');db.commit()
+        company=db.scalars(select(Company)).first()
+        assert should_degrade_for_budget(db,company.id,'gate-model') is None
+    summary=admin.get('/api/admin/quality/usage').json()
+    assert summary['daily_alert'] is True
+    assert summary['currently_degraded'] is False
+    # Explicitly enable enforcement — only then degrade.
+    config['enforce_over_budget']=True
+    assert admin.put('/api/admin/quality/budget',json=config).status_code==200
+    with SessionLocal() as db:
+        company=db.scalars(select(Company)).first()
+        assert should_degrade_for_budget(db,company.id,'gate-model')=='daily'
+        assert should_degrade_for_budget(db,company.id,'other-model') is None
+    summary=admin.get('/api/admin/quality/usage').json()
+    assert summary['enforce_over_budget'] is True
+    assert summary['currently_degraded'] is True
+    # Chat path: with key + sources, over-budget + enforce → extractive, no model stream.
+    monkeypatch.setattr(settings(),'deepseek_api_key','test-provider-key')
+    monkeypatch.setattr(settings(),'deepseek_model','gate-model')
+    called={'n':0}
+    def tracked(*args,**kwargs):
+        called['n']+=1
+        if False: yield 'delta','x'
+        return
+        yield
+    monkeypatch.setattr(chat,'deepseek_stream',tracked)
+    marker='BUDGET-GATE-'+uuid.uuid4().hex[:8]
+    phrase='星河蓝鲸门控资料 '+marker
+    doc=admin.post('/api/admin/documents',json={
+        'title':phrase,'content':f'{phrase} 的公开服务说明，仅用于门控自测。','category':'测试','status':'published'
+    })
+    assert doc.status_code==200,doc.text
+    hit=admin.post('/api/admin/retrieval-test',json={'query':phrase}).json()['sources']
+    assert any(s['document_id']==doc.json()['id'] for s in hit), hit
+    session=admin.post('/api/widget/sessions',json={}).json()
+    result=admin.post(f'/api/widget/sessions/{session["id"]}/messages',headers={'Authorization':'Bearer '+session['token']},
+                      json={'content':phrase,'client_id':uuid.uuid4().hex})
+    assert result.status_code==200
+    assert '已达预算' in result.text
+    assert '"mode": "extractive"' in result.text or '"mode":"extractive"' in result.text
+    assert called['n']==0

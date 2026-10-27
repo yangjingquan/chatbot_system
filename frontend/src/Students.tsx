@@ -5,6 +5,7 @@ import { api, date, useResource } from "./api";
 import { useAccess } from "./auth";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
 import { exams, Filters, Pager, usePaged } from "./lists";
+import { trialLabels } from "./Reception";
 
 export function StudentAssociation({
   lead,
@@ -630,6 +631,22 @@ export function Students({
                         </small>
                       </article>
                     ))}
+                    <h3>试听记录</h3>
+                    {edit.trials?.length ? (
+                      edit.trials.map((t: any) => (
+                        <article className="revision-row" key={t.id}>
+                          <Link className="text-link" to="/trials">
+                            {t.course_name} · {trialLabels[t.status] || t.status}
+                          </Link>
+                          <small>
+                            {t.lead_name || ""} · 意向 {date(t.requested_at, true)}
+                            {t.reason ? ` · ${t.reason}` : ""}
+                          </small>
+                        </article>
+                      ))
+                    ) : (
+                      <p className="footnote">关联线索尚无试听记录。</p>
+                    )}
                     <h3>跟进记录</h3>
                     {edit.followups?.map((f: any) => (
                       <blockquote className="evidence" key={f.id}>

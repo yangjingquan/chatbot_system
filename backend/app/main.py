@@ -98,16 +98,34 @@ def health():
             worker_status = check_worker(db).get('status', 'unknown')
     except Exception:
         worker_status = 'fail'
+    schema_info = {'applied': 0, 'expected': 0, 'current': False}
+    try:
+        from .migrations import applied_schema_version, expected_schema_version
+        applied = applied_schema_version(engine) if db_ok else 0
+        expected = expected_schema_version()
+        schema_info = {
+            'applied': applied,
+            'expected': expected,
+            'current': bool(db_ok and applied >= expected),
+        }
+        if db_ok and applied < expected:
+            overall_schema_lag = True
+        else:
+            overall_schema_lag = False
+    except Exception:
+        overall_schema_lag = False
     overall = 'ok' if db_ok and redis_status != 'fail' else 'fail'
-    if overall == 'ok' and worker_status == 'fail':
+    if overall == 'ok' and (worker_status == 'fail' or overall_schema_lag):
         overall = 'degraded'
     return {
         'status': overall,
         'version': '0.4.0',
+        'schema_version': schema_info,
         'retrieval': retrieval_status(),
         'checks': {
             'database': 'ok' if db_ok else 'fail',
             'redis': redis_status,
             'worker': worker_status,
+            'schema': 'ok' if schema_info.get('current') else ('fail' if db_ok else 'unknown'),
         },
     }

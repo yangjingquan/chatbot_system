@@ -98,7 +98,7 @@ def export_logical(db: Session, tenant_id: str = TENANT) -> dict:
         'conversations': [{
             'id': c.id, 'tenant_id': c.tenant_id, 'token_hash': c.token_hash,
             'visitor_name': c.visitor_name, 'source_page': c.source_page, 'status': c.status,
-            'assigned_to_id': c.assigned_to_id, 'waiting_since': _iso(c.waiting_since),
+            'assigned_to_id': c.assigned_to_id, 'waiting_since': _iso(c.waiting_since), 'handoff_note': getattr(c,'handoff_note','') or '',
             'analysis': c.analysis, 'is_demo': c.is_demo,
             'created_at': _iso(c.created_at), 'updated_at': _iso(c.updated_at),
         } for c in conversations],
@@ -259,7 +259,7 @@ def restore_logical(db: Session, payload: dict, *, clear_first: bool = True):
             id=row['id'], tenant_id=row.get('tenant_id', tenant_id), token_hash=row['token_hash'],
             visitor_name=row.get('visitor_name') or '网站访客', source_page=row.get('source_page') or '官网',
             status=row.get('status') or 'bot', assigned_to_id=row.get('assigned_to_id'),
-            waiting_since=_parse_dt(row.get('waiting_since')), analysis=row.get('analysis') or {},
+            waiting_since=_parse_dt(row.get('waiting_since')), handoff_note=row.get('handoff_note') or '', analysis=row.get('analysis') or {},
             is_demo=bool(row.get('is_demo')),
             created_at=_parse_dt(row.get('created_at')) or now(),
             updated_at=_parse_dt(row.get('updated_at')) or now(),

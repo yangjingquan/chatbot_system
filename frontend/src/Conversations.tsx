@@ -23,6 +23,15 @@ import {
   useToast,
 } from "./ui";
 
+
+function formatWait(seconds?: number | null) {
+  if (seconds == null) return "";
+  if (seconds < 60) return `${seconds} 秒`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
+}
+
 export function MessageBubble({
   message,
   onFeedback,
@@ -116,7 +125,10 @@ export function Conversations({
     list = pages.resource;
   const owners = useResource<any[]>("/admin/filter-options", version);
   const receptionStaff = useResource<any[]>("/admin/reception-staff", version);
+  const canned = useResource<any[]>("/admin/canned-replies", version);
+  const summary = useResource<any>("/admin/reception-summary", version);
   const [transferTo, setTransferTo] = useState("");
+  const [transferNote, setTransferNote] = useState("");
   const [params] = useSearchParams();
   const [selected, setSelected] = useState(params.get("conversation_id") || ""),
     [detail, setDetail] = useState<any>(null),
@@ -135,9 +147,17 @@ export function Conversations({
     const timer = setInterval(() => {
       list.reload();
       receptionStaff.reload();
-    }, 10000);
+      summary.reload();
+    }, 5000);
     return () => clearInterval(timer);
   }, []);
+  useEffect(() => {
+    const q = params.get("conversation_id");
+    if (q) setSelected(q);
+    const st = params.get("status");
+    if (st && pages.filters.status !== st) pages.change("status", st);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
   useEffect(() => {
     if (!selected && rows.length) setSelected(rows[0].id);
   }, [list.data, selected]);
@@ -169,7 +189,7 @@ export function Conversations({
         });
     setDetail(null);
     load();
-    const timer = setInterval(load, 3500);
+    const timer = setInterval(load, 2500);
     return () => {
       active = false;
       clearInterval(timer);
@@ -197,10 +217,14 @@ export function Conversations({
   async function send() {
     if (!reply.trim()) return;
     setBusy(true);
+    const clientId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? "agent-" + crypto.randomUUID().replace(/-/g, "")
+        : "agent-" + Date.now() + Math.random().toString(16).slice(2);
     try {
       await api(`/admin/conversations/${selected}/reply`, {
         method: "POST",
-        body: JSON.stringify({ content: reply }),
+        body: JSON.stringify({ content: reply, client_id: clientId }),
       });
       setReply("");
       setDetail(await api("/admin/conversations/" + selected));
@@ -226,6 +250,18 @@ export function Conversations({
       </section>
       <div className="conversation-workspace">
         <aside className="conversation-list">
+          <div className="reception-pulse">
+            <small>
+              排队 {summary.data?.waiting ?? "—"}
+              {(summary.data?.timed_out || 0) > 0
+                ? ` · 超时 ${summary.data.timed_out}`
+                : ""}
+              {summary.data?.oldest_wait_seconds != null
+                ? ` · 最长等待 ${formatWait(summary.data.oldest_wait_seconds)}`
+                : ""}
+              {` · 规则 ${summary.data?.assign_mode === "least_busy" ? "最少负载" : "手动领取"}`}
+            </small>
+          </div>
           <div className="conversation-filters">
             <select
               aria-label="接待状态"
@@ -265,14 +301,21 @@ export function Conversations({
                   <span>{v.source_page}</span>
                   <Badge
                     tone={
-                      v.status === "waiting"
+                      v.timed_out
                         ? "amber"
-                        : v.status === "human"
-                          ? "green"
-                          : "muted"
+                        : v.status === "waiting"
+                          ? "amber"
+                          : v.status === "human"
+                            ? "green"
+                            : "muted"
                     }
                   >
-                    {statusLabel[v.status]}
+                    {v.timed_out
+                      ? "排队超时"
+                      : statusLabel[v.status]}
+                    {v.status === "waiting" && v.waiting_seconds != null
+                      ? ` · ${formatWait(v.waiting_seconds)}`
+                      : ""}
                   </Badge>
                 </div>
                 {v.is_demo && (
@@ -311,7 +354,13 @@ export function Conversations({
                     接待人：{detail.assigned_name}
                     {detail.waiting_since &&
                       ` · 排队起始 ${date(detail.waiting_since, true)}`}
+                    {detail.waiting_seconds != null &&
+                      ` · 已等待 ${formatWait(detail.waiting_seconds)}`}
+                    {detail.timed_out && " · 已超时"}
                   </p>
+                  {detail.handoff_note ? (
+                    <p className="handoff-note">交接备注：{detail.handoff_note}</p>
+                  ) : null}
                 </div>
                 <div className="actions">
                   {detail.status === "human" && canHandle && (
@@ -332,15 +381,28 @@ export function Conversations({
                                 : s.status === "away"
                                   ? "暂离"
                                   : "离线"}
+                              {` · 接待 ${s.active_count ?? 0}/${s.max_active ?? "-"}`}
                             </option>
                           ))}
                       </select>
+                      <input
+                        aria-label="交接备注"
+                        placeholder="交接备注（可选）"
+                        value={transferNote}
+                        maxLength={1000}
+                        onChange={(e) => setTransferNote(e.target.value)}
+                        style={{ minWidth: 140, maxWidth: 220 }}
+                      />
                       <button
                         className="button secondary small"
                         disabled={busy || !transferTo}
-                        onClick={() =>
-                          action("transfer", { assigned_to_id: transferTo })
-                        }
+                        onClick={async () => {
+                          await action("transfer", {
+                            assigned_to_id: transferTo,
+                            note: transferNote,
+                          });
+                          setTransferNote("");
+                        }}
                       >
                         转交
                       </button>
@@ -385,6 +447,25 @@ export function Conversations({
                 <div ref={bottom} />
               </div>
               <div className="reply-area">
+                {canHandle && detail.status === "human" && !!canned.data?.length && (
+                  <div className="canned-replies" aria-label="常用回复">
+                    {canned.data.map((item: any) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="button secondary small"
+                        disabled={busy}
+                        onClick={() =>
+                          setReply((prev) =>
+                            prev ? prev + (prev.endsWith("\n") ? "" : "\n") + item.content : item.content,
+                          )
+                        }
+                      >
+                        {item.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <label className="sr-only" htmlFor="agent-reply">
                   人工回复
                 </label>
@@ -492,7 +573,29 @@ export function Conversations({
                   <span className="muted">暂无足够信息</span>
                 )}
               </div>
-              <h3>判断依据</h3>
+              <h3>
+                判断依据{" "}
+                <small>
+                  规则分数 {detail.analysis?.score ?? 0} / 100 · 跟进辅助
+                </small>
+              </h3>
+              {detail.analysis?.uncertainty && (
+                <p className="footnote">
+                  {detail.analysis?.confidence
+                    ? `置信：${
+                        (
+                          {
+                            high: "较高",
+                            medium: "中等",
+                            low: "较低",
+                          } as Record<string, string>
+                        )[detail.analysis.confidence] ||
+                        detail.analysis.confidence
+                      }。`
+                    : ""}
+                  {detail.analysis.uncertainty}
+                </p>
+              )}
               {detail.analysis?.evidence?.length ? (
                 detail.analysis.evidence.map((e: any, i: number) => (
                   <blockquote className="evidence" key={i}>

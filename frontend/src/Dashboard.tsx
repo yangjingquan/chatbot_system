@@ -161,7 +161,7 @@ export function Dashboard({
   const metrics = [
     ["咨询会话", c.conversations, MessagesSquare, "已记录有效咨询"],
     ["新增线索", c.leads, Users, "自愿提交联系请求"],
-    ["高意向线索", c.high_intent, Target, "依据规则及对话证据"],
+    ["高意向线索", c.high_intent, Target, "规则辅助，非成交概率"],
     ["公开知识", c.published, BookOpen, "已发布且可供访客使用"],
   ] as const;
   return (
@@ -260,7 +260,7 @@ export function Dashboard({
           <div className="panel-heading">
             <div>
               <h2>线索意向分布</h2>
-              <p>规则分级，支持人工复核</p>
+              <p>规则辅助分级，支持人工复核；非成交概率</p>
             </div>
             <Link to="/leads" aria-label="查看线索">
               <ArrowUpRight size={20} />
@@ -417,27 +417,44 @@ export function Analytics({
           <p>留资会话数 ÷ 有效咨询会话数</p>
         </div>
         <div className="metric">
-          <span>人工确认合格</span>
+          <span>试听申请</span>
           <strong>
-            {c.qualified}
+            {c.trials ?? 0}
             <small>条</small>
           </strong>
-          <p>阶段为已合格、商机推进或已成交</p>
+          <p>有效咨询关联的试听（含各状态）</p>
         </div>
         <div className="metric">
-          <span>DeepSeek 回答数</span>
+          <span>成交 / 合格</span>
           <strong>
-            {d.usage.deepseek_answers}
-            <small>次</small>
+            {c.customers}
+            <small> / {c.qualified}</small>
           </strong>
-          <p>仅统计实际调用模型的消息</p>
+          <p>已成交数 / 合格及以上（需回填）</p>
         </div>
         <div className="metric">
-          <span>模型 Token 用量</span>
-          <strong>{d.usage.total_tokens.toLocaleString()}</strong>
-          <p>未接入时为 0，不估算虚拟费用</p>
+          <span>人工首次回复</span>
+          <strong>
+            {d.reply_latency?.avg_seconds != null
+              ? d.reply_latency.avg_seconds
+              : "—"}
+            <small>
+              {d.reply_latency?.avg_seconds != null ? "秒" : ""}
+            </small>
+          </strong>
+          <p>
+            排队到首条客服消息
+            {d.reply_latency?.sample_count
+              ? `（${d.reply_latency.sample_count} 个样本）`
+              : "（暂无样本）"}
+          </p>
         </div>
       </div>
+      <p className="footnote" style={{ marginTop: 8 }}>
+        模型调用 {d.usage.deepseek_answers} 次，Token{" "}
+        {d.usage.total_tokens.toLocaleString()}
+        ；未配置单价时费用见「回答质量」用量页。
+      </p>
       <div className="dashboard-grid">
         <section className="panel">
           <div className="panel-heading">
@@ -488,6 +505,25 @@ export function Analytics({
         <section className="panel">
           <div className="panel-heading">
             <div>
+              {(d.knowledge_todo_count || 0) > 0 && (
+                <div className="panel" style={{ marginBottom: 12 }}>
+                  <div className="list-toolbar">
+                    <strong>知识到期待办</strong>
+                    <Badge tone="amber">{d.knowledge_todo_count} 条</Badge>
+                    <Link className="text-link" to="/knowledge">
+                      去知识库处理
+                    </Link>
+                  </div>
+                  <ul className="plain-list">
+                    {(d.knowledge_todos || []).map((t: any) => (
+                      <li key={t.id}>
+                        {t.title}
+                        <small className="cell-sub">{t.responsible_name}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <h2>待补充知识</h2>
               <p>没有找到足够依据的问题</p>
             </div>
@@ -511,7 +547,8 @@ export function Analytics({
         </section>
       </div>
       <p className="footnote">
-        统计说明：关闭“包含演示记录”后排除合成数据。关闭窗口不视为问题解决，规则评分不等于成交概率；成交效果需要销售如实回填。
+        统计说明：关闭“包含演示记录”后排除合成数据。有效咨询、留资、试听、成交与回复时长口径见接口
+        metric_definitions；规则评分不等于成交概率，成交需销售如实回填。列表/导出/报表共用同一筛选。
       </p>
     </>
   );

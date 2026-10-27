@@ -191,6 +191,14 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
         topic=active_exams[0]+' '
     sources=retrieve(db,topic+data.content,context=conv.analysis.get('knowledge_context') or infer_context(topic+data.content))
     mode=('deepseek' if settings().deepseek_api_key else 'extractive') if sources else 'unknown'
+    budget_degraded=False
+    if mode=='deepseek':
+        from .quality import should_degrade_for_budget
+        degrade_reason=should_degrade_for_budget(db,conv.tenant_id,settings().deepseek_model)
+        if degrade_reason:
+            # Explicit admin opt-in only; default remains alert-without-stopping.
+            mode='extractive'
+            budget_degraded=True
     answer=Message(conversation_id=conv.id,role='assistant',content='',reply_to=user_message.id,
                    mode=mode,state='pending',sources=sources)
     db.add(answer)
@@ -225,7 +233,7 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
             answer.state='cancelled'
             return '已切换人工服务，机器人回答已停止。'
         try:
-            yield event('meta',{'mode':mode,'sources':sources})
+            yield event('meta',{'mode':mode,'sources':sources,'budget_degraded':budget_degraded})
             if mode=='unknown':
                 body='当前已发布资料中没有找到足够依据。请补充目标考试、地区或课程名称；涉及具体报名时间和报考资格，请核对对应年度官方公告，也可以转人工核实。'
                 pieces=[body[i:i+24] for i in range(0,len(body),24)]
@@ -241,7 +249,10 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
                 if message:
                     yield event('error',{'message':message})
                     return
-                text='当前未配置 DeepSeek，以下为已发布资料摘录：\n\n'
+                if budget_degraded:
+                    text='今日或本月模型估算费用已达预算，已按管理员设置改为资料摘录，暂不调用付费模型。如需调整请联系管理员。\n\n'
+                else:
+                    text='当前未配置 DeepSeek，以下为已发布资料摘录：\n\n'
                 yield event('delta',{'text':text})
                 for i,source in enumerate(sources[:2]):
                     message=stop_for_human() or stop_for_stale()

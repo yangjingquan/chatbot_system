@@ -138,6 +138,9 @@ def test_public_health_includes_checks(client):
     assert body['status'] in ('ok', 'degraded', 'fail')
     assert 'database' in body['checks']
     assert 'worker' in body['checks']
+    assert 'schema' in body['checks']
+    assert body['schema_version']['current'] is True
+    assert body['schema_version']['applied'] >= 1
 
 
 def test_ack_and_resolve_alert(admin):

@@ -88,10 +88,16 @@ def retrieve(db,query:str,public_only:bool=True,tenant_id:str=TENANT,limit:int=4
     if courses and docs:return courses[:min(2,limit)]+docs[:max(0,limit-min(2,len(courses)))]
     return (courses+docs)[:limit]
 
+# Text/PDF/DOCX with tables often exceed 5 MB; OCR is still intentionally off, so
+# scanned image-only PDFs continue to fail the extractable-text check below.
+MAX_FILE_BYTES = 15 * 1024 * 1024
+MAX_FILE_MB = MAX_FILE_BYTES // (1024 * 1024)
+ALLOWED_SUFFIXES = {'.md', '.txt', '.pdf', '.docx'}
+
 def parse_file(filename: str, content: bytes) -> str:
     suffix = Path(filename).suffix.lower()
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(413, '文件不能超过 5 MB')
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(413, f'文件不能超过 {MAX_FILE_MB} MB')
     try:
         if suffix in ('.md', '.txt'):
             text = content.decode('utf-8-sig')
@@ -102,11 +108,11 @@ def parse_file(filename: str, content: bytes) -> str:
                 raise ValueError('encrypted or too many pages')
             text = '\n\n'.join(f'第 {i + 1} 页\n{p.extract_text() or ""}' for i, p in enumerate(reader.pages))
             if len(re.sub(r'第 \d+ 页|\s', '', text)) < 20:
-                raise HTTPException(422, '未提取到足够文字，可能是扫描 PDF；首版尚未启用 OCR，请上传可复制文字的 PDF 或文本')
+                raise HTTPException(422, '未提取到足够文字，可能是扫描 PDF；本版尚未启用 OCR，请上传可复制文字的 PDF、Markdown、TXT 或 DOCX')
         elif suffix == '.docx':
             from docx import Document as Word
             archive = zipfile.ZipFile(io.BytesIO(content))
-            if len(archive.infolist()) > 1000 or sum(i.file_size for i in archive.infolist()) > 20 * 1024 * 1024:
+            if len(archive.infolist()) > 1000 or sum(i.file_size for i in archive.infolist()) > 40 * 1024 * 1024:
                 raise ValueError('document expands beyond limit')
             document = Word(io.BytesIO(content))
             text = '\n'.join(p.text for p in document.paragraphs)

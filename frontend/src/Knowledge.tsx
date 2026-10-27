@@ -63,6 +63,7 @@ export function Knowledge({
   const list = usePaged("/admin/documents", true, version),
     r = list.resource;
   const people = useResource<any[]>("/admin/knowledge-responsibles", version);
+  const todos = useResource<any>("/admin/knowledge-todos?status=open&page_size=10", version);
   const { can, user } = useAccess(),
     toast = useToast(),
     upload = useRef<HTMLInputElement>(null);
@@ -192,18 +193,31 @@ export function Knowledge({
       setBusy(false);
     }
   }
-  async function uploadFile(file: File) {
+  async function uploadFiles(fileList: FileList | File[]) {
     if (dirty) {
       toast("请先处理未保存的修改。", true);
       return;
     }
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
     setBusy(true);
     const body = new FormData();
-    body.append("file", file);
+    files.forEach((file) => body.append("files", file));
     try {
-      await api("/admin/document-jobs/upload", { method: "POST", body });
+      const result = await api("/admin/document-jobs/upload-batch", {
+        method: "POST",
+        body,
+      });
       onChange();
-      toast("文件已排队解析，请到“文档处理任务”查看进度并打开生成的草稿");
+      todos.reload();
+      const queued = result.queued || 0;
+      const failed = result.failed || 0;
+      toast(
+        failed
+          ? `已排队 ${queued} 个，${failed} 个失败（其余不受影响）。详见文档处理任务。`
+          : `已排队 ${queued} 个文件，请到“文档处理任务”查看进度`,
+        !!failed,
+      );
     } catch (e: any) {
       toast(e.message, true);
     } finally {
@@ -259,9 +273,8 @@ export function Knowledge({
               type="file"
               className="sr-only"
               accept=".md,.txt,.pdf,.docx"
-              onChange={(e) =>
-                e.target.files?.[0] && uploadFile(e.target.files[0])
-              }
+              multiple
+              onChange={(e) => e.target.files && uploadFiles(e.target.files)}
             />
             <button
               className="button secondary"
@@ -269,7 +282,7 @@ export function Knowledge({
               onClick={() => upload.current?.click()}
             >
               <Upload size={16} />
-              上传文件
+              批量上传
             </button>
             <button
               className="button"
@@ -282,6 +295,80 @@ export function Knowledge({
           </>
         }
       />
+      {todos.data?.items?.length ? (
+        <section className="panel">
+          <div className="list-toolbar">
+            <strong>资料到期提醒</strong>
+            <span>共 {todos.data.total} 条待办</span>
+            <button className="button secondary small" onClick={todos.reload}>
+              刷新
+            </button>
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>提醒</th>
+                  <th>负责人</th>
+                  <th>到期时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {todos.data.items.map((t: any) => (
+                  <tr key={t.id}>
+                    <td>
+                      <Badge tone={t.kind === "expired" ? "amber" : "muted"}>
+                        {t.kind === "expired" ? "已过期" : "即将到期"}
+                      </Badge>
+                      <div>
+                        <strong>{t.title}</strong>
+                        <small className="cell-sub">{t.message}</small>
+                      </div>
+                    </td>
+                    <td>{t.responsible_name}</td>
+                    <td>{date(t.due_at, true)}</td>
+                    <td>
+                      <button
+                        className="text-link"
+                        onClick={() => open(t.document_id)}
+                      >
+                        打开资料
+                      </button>
+                      {can("knowledge.write") && (
+                        <button
+                          className="button secondary small"
+                          disabled={busy}
+                          onClick={async () => {
+                            try {
+                              await api(
+                                "/admin/knowledge-todos/" + t.id + "/complete",
+                                {
+                                  method: "POST",
+                                  body: JSON.stringify({ action: "done" }),
+                                },
+                              );
+                              todos.reload();
+                              toast("待办已完成");
+                            } catch (e: any) {
+                              toast(e.message, true);
+                            }
+                          }}
+                        >
+                          标记完成
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="footnote">
+            扫描 PDF 的 OCR 尚未启用。过期与内部资料不会进入公开回答。
+          </p>
+        </section>
+      ) : null}
       <div className="knowledge-summary">
         <BookOpen size={20} />
         <span>
@@ -316,6 +403,15 @@ export function Knowledge({
                   {statusLabel[v]}
                 </option>
               ))}
+            </select>
+            <select
+              aria-label="可见范围筛选"
+              value={list.filters.visibility || ""}
+              onChange={(e) => list.change("visibility", e.target.value)}
+            >
+              <option value="">全部可见范围</option>
+              <option value="public">公开</option>
+              <option value="internal">内部</option>
             </select>
           </div>
           {r.loading ? (

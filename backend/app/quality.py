@@ -100,19 +100,88 @@ class BudgetInput(BaseModel):
     output:float=Field(ge=0,le=10000,allow_inf_nan=False)
     daily_budget:float=Field(gt=0,le=10000000,allow_inf_nan=False)
     monthly_budget:float=Field(gt=0,le=10000000,allow_inf_nan=False)
+    # Default off: over-budget degrade only after an explicit admin enable.
+    enforce_over_budget:bool=False
+
+def pricing_ready(cfg:dict|None)->bool:
+    cfg=cfg or {}
+    return bool(cfg.get('model')) and all(k in cfg for k in ('input_miss','input_hit','output','daily_budget','monthly_budget'))
+
+def estimated_total(rows)->Decimal|None:
+    """Sum only priced calls. None means no priced rows (caller decides unknown vs zero)."""
+    priced=[r.estimated_cny for r in rows if r.estimated_cny is not None]
+    if not priced:
+        return None
+    return sum(priced,Decimal(0))
+
+def call_date(row,zone):
+    return aware(row.created_at).astimezone(zone).date()
+
+def budget_spend(db,tenant_id,cfg=None):
+    """Return Asia/Shanghai day/month priced spend and alert flags for a tenant."""
+    zone=ZoneInfo('Asia/Shanghai');today=now().astimezone(zone).date()
+    company=db.get(Company,tenant_id)
+    cfg=cfg if cfg is not None else (company.config.get('_budget',{}) if company else {})
+    rows=db.scalars(select(ModelCall).where(ModelCall.tenant_id==tenant_id).order_by(ModelCall.created_at.desc())).all()
+    day=[r for r in rows if call_date(r,zone)==today]
+    month=[r for r in rows if aware(r.created_at).astimezone(zone).strftime('%Y-%m')==today.strftime('%Y-%m')]
+    day_total=estimated_total(day)
+    month_total=estimated_total(month)
+    ready=pricing_ready(cfg)
+    def display_total(total, period_rows):
+        if not ready:
+            return None
+        if total is not None:
+            return float(total)
+        # Calls exist but none are priced → unknown, never present as free zero.
+        if period_rows:
+            return None
+        return 0.0
+    day_value=display_total(day_total, day)
+    month_value=display_total(month_total, month)
+    # Alerts compare only known priced spend; unknown totals do not trip the gate.
+    daily_alert=bool(ready and day_total is not None and float(day_total)>=float(cfg['daily_budget']))
+    monthly_alert=bool(ready and month_total is not None and float(month_total)>=float(cfg['monthly_budget']))
+    return {
+        'cfg':cfg,'ready':ready,'day_rows':day,'month_rows':month,'all_rows':rows,
+        'daily_estimated_cny':day_value,'monthly_estimated_cny':month_value,
+        'daily_alert':daily_alert,'monthly_alert':monthly_alert,
+        'enforce_over_budget':bool(cfg.get('enforce_over_budget')),
+    }
+
+def should_degrade_for_budget(db,tenant_id,model:str)->str|None:
+    """Return degrade reason only when admin explicitly enabled enforcement and budget is exceeded."""
+    spend=budget_spend(db,tenant_id)
+    cfg=spend['cfg']
+    if not spend['enforce_over_budget']:
+        return None
+    if not spend['ready'] or cfg.get('model')!=model:
+        return None
+    if spend['daily_alert']:
+        return 'daily'
+    if spend['monthly_alert']:
+        return 'monthly'
+    return None
 
 @router.put('/admin/quality/budget')
 def budget(data:BudgetInput,user:Admin=Depends(require('settings.write')),db:Session=Depends(get_db)):
     company=db.scalar(select(Company).where(Company.id==user.tenant_id).with_for_update())
-    company.config={**company.config,'_budget':{**data.model_dump(),'updated_at':now().isoformat()}}
+    payload={**data.model_dump(),'updated_at':now().isoformat()}
+    company.config={**company.config,'_budget':payload}
     from .admin import record
-    record(db,user,'更新模型估算单价与预算');db.commit();return company.config['_budget']
+    action='更新模型估算单价与预算'
+    if data.enforce_over_budget:
+        action+='（已显式启用超预算降级）'
+    else:
+        action+='（超预算仅告警）'
+    record(db,user,action);db.commit();return company.config['_budget']
 
 def record_usage(db,message,model,latency_ms,error_type,pricing=None):
     conv=db.get(Conversation,message.conversation_id)
     pricing=pricing if pricing is not None else db.get(Company,conv.tenant_id).config.get('_budget',{})
     usage={k:v for k,v in (message.usage or {}).items() if k in ('prompt_tokens','completion_tokens','total_tokens','prompt_cache_hit_tokens','prompt_cache_miss_tokens') and isinstance(v,int) and v>=0}
     cost=None
+    # Cost stays unknown unless both matching unit prices and token usage are present.
     if pricing.get('model')==model and 'prompt_tokens' in usage and 'completion_tokens' in usage:
         hit=min(usage.get('prompt_cache_hit_tokens',0),usage['prompt_tokens']);miss=usage['prompt_tokens']-hit
         cost=(Decimal(str(pricing['input_hit']))*hit+Decimal(str(pricing['input_miss']))*miss+Decimal(str(pricing['output']))*usage['completion_tokens'])/Decimal(1000000)
@@ -120,15 +189,101 @@ def record_usage(db,message,model,latency_ms,error_type,pricing=None):
     if not row:row=ModelCall(message_id=message.id,tenant_id=conv.tenant_id,model=model);db.add(row)
     row.usage=usage;row.pricing=pricing;row.estimated_cny=cost;row.latency_ms=latency_ms;row.error_type=error_type;row.state=message.state
 
+def _trend_and_anomaly(rows,zone,today):
+    from datetime import timedelta
+    by_day={}
+    for r in rows:
+        d=call_date(r,zone)
+        bucket=by_day.setdefault(d,{'date':d.isoformat(),'calls':0,'tokens':0,'priced_calls':0,'unpriced_calls':0,'unknown_usage_calls':0,'estimated_cny':None})
+        bucket['calls']+=1
+        tokens=r.usage.get('total_tokens') if isinstance(r.usage,dict) else None
+        if isinstance(tokens,int) and tokens>=0:
+            bucket['tokens']+=tokens
+        else:
+            bucket['unknown_usage_calls']+=1
+        if r.estimated_cny is None:
+            bucket['unpriced_calls']+=1
+        else:
+            bucket['priced_calls']+=1
+            cur=bucket['estimated_cny']
+            bucket['estimated_cny']=float((Decimal(str(cur or 0))+Decimal(str(r.estimated_cny))))
+    trend=[]
+    for i in range(13,-1,-1):
+        d=today-timedelta(days=i)
+        bucket=by_day.get(d,{'date':d.isoformat(),'calls':0,'tokens':0,'priced_calls':0,'unpriced_calls':0,'unknown_usage_calls':0,'estimated_cny':None})
+        # No priced calls that day → estimated stays null (unknown), never forced to 0 as "free".
+        if bucket['priced_calls']==0:
+            bucket['estimated_cny']=None
+        trend.append(bucket)
+    prior=[b for b in trend[:-1] if b['calls']>0]
+    today_bucket=trend[-1]
+    anomaly=None
+    if prior and today_bucket['calls']>0:
+        avg_tokens=sum(b['tokens'] for b in prior)/len(prior)
+        avg_calls=sum(b['calls'] for b in prior)/len(prior)
+        growth_tokens=today_bucket['tokens']>=max(avg_tokens*2,1000) if avg_tokens>0 else today_bucket['tokens']>=2000
+        growth_calls=today_bucket['calls']>=max(avg_calls*2,5) if avg_calls>0 else today_bucket['calls']>=10
+        if growth_tokens or growth_calls:
+            anomaly={
+                'level':'warn',
+                'message':'今日用量相对近两周有记录日期明显偏高，请核对是否异常增长或账单波动。',
+                'today_tokens':today_bucket['tokens'],
+                'avg_tokens':round(avg_tokens,1),
+                'today_calls':today_bucket['calls'],
+                'avg_calls':round(avg_calls,2),
+            }
+    return trend,anomaly
+
 @router.get('/admin/quality/usage')
 def usage_summary(user:Admin=Depends(require('settings.write')),db:Session=Depends(get_db)):
     zone=ZoneInfo('Asia/Shanghai');today=now().astimezone(zone).date()
-    rows=db.scalars(select(ModelCall).where(ModelCall.tenant_id==user.tenant_id).order_by(ModelCall.created_at.desc())).all()
-    day=[r for r in rows if aware(r.created_at).astimezone(zone).date()==today]
-    month=[r for r in rows if aware(r.created_at).astimezone(zone).strftime('%Y-%m')==today.strftime('%Y-%m')]
-    def total(rs):return float(sum((r.estimated_cny or Decimal(0) for r in rs),Decimal(0)))
-    cfg=db.get(Company,user.tenant_id).config.get('_budget',{})
-    return {'pricing':cfg,'calls':len(rows),'tokens':sum(r.usage.get('total_tokens',0) for r in rows),'unpriced_calls':sum(r.estimated_cny is None for r in rows),'unknown_usage_calls':sum('total_tokens' not in r.usage for r in rows),'failed_calls':sum(r.state!='completed' for r in rows),'daily_estimated_cny':total(day),'monthly_estimated_cny':total(month),'daily_alert':bool(cfg and total(day)>=cfg['daily_budget']),'monthly_alert':bool(cfg and total(month)>=cfg['monthly_budget']),'billing_note':'人民币估算，仅含已取得用量并配置对应模型单价的调用；以供应商账单为准。预算为站内告警，不自动停止服务。','recent':[{'message_id':r.message_id,'model':r.model,'usage':r.usage,'state':r.state,'error_type':r.error_type,'latency_ms':r.latency_ms,'estimated_cny':float(r.estimated_cny) if r.estimated_cny is not None else None,'created_at':r.created_at.isoformat()} for r in rows[:30]]}
+    spend=budget_spend(db,user.tenant_id)
+    cfg=spend['cfg'];rows=spend['all_rows'];day=spend['day_rows'];month=spend['month_rows']
+    trend,anomaly=_trend_and_anomaly(rows,zone,today)
+    priced_all=sum(r.estimated_cny is not None for r in rows)
+    unpriced=sum(r.estimated_cny is None for r in rows)
+    unknown_usage=sum('total_tokens' not in (r.usage or {}) for r in rows)
+    enforce=bool(cfg.get('enforce_over_budget'))
+    if enforce:
+        note='人民币估算，仅含已取得用量并配置对应模型单价的调用；以供应商账单为准。管理员已显式启用超预算降级：达到日/月预算后新对话将改用资料摘录，不再调用付费模型。'
+    else:
+        note='人民币估算，仅含已取得用量并配置对应模型单价的调用；以供应商账单为准。预算默认为站内告警，不自动停止服务；超预算降级须管理员显式开启。'
+    # Display: without configured unit prices, totals are unknown — never present as free/zero.
+    daily_display=spend['daily_estimated_cny'] if spend['ready'] else None
+    monthly_display=spend['monthly_estimated_cny'] if spend['ready'] else None
+    return {
+        'pricing':cfg,
+        'pricing_ready':spend['ready'],
+        'calls':len(rows),
+        'tokens':sum((r.usage or {}).get('total_tokens',0) for r in rows if isinstance((r.usage or {}).get('total_tokens'),int)),
+        'priced_calls':priced_all,
+        'unpriced_calls':unpriced,
+        'unknown_usage_calls':unknown_usage,
+        'failed_calls':sum(r.state!='completed' for r in rows),
+        'daily_estimated_cny':daily_display,
+        'monthly_estimated_cny':monthly_display,
+        'daily_alert':spend['daily_alert'],
+        'monthly_alert':spend['monthly_alert'],
+        'enforce_over_budget':enforce,
+        'currently_degraded':bool(enforce and (spend['daily_alert'] or spend['monthly_alert'])),
+        'billing_note':note,
+        'trend_daily':trend,
+        'anomaly_growth':anomaly,
+        'reconciliation':{
+            'priced_calls':priced_all,
+            'unpriced_calls':unpriced,
+            'unknown_usage_calls':unknown_usage,
+            'estimated_cny_sum':(lambda total: float(total) if spend['ready'] and total is not None else None)(estimated_total(rows)),
+            'note':'站内估算仅供对账辅助。请与供应商账单核对；常见差额来自未配置/过期单价、未回传用量、失败或中断调用、缓存命中差异。未估价与未知用量不得记为免费。',
+        },
+        'recent':[{
+            'message_id':r.message_id,'model':r.model,'usage':r.usage,'state':r.state,
+            'error_type':r.error_type,'latency_ms':r.latency_ms,
+            'estimated_cny':float(r.estimated_cny) if r.estimated_cny is not None else None,
+            'cost_display':('¥%.6f'%float(r.estimated_cny)) if r.estimated_cny is not None else '未知',
+            'created_at':r.created_at.isoformat(),
+        } for r in rows[:30]],
+    }
 
 EVAL_CASES=[
  ('课程',f'{exam}有哪些课程？','current_catalog') for exam in ('公安联考','国考','省考','选调生','事业单位','社会招警','辅警','社区工作者')

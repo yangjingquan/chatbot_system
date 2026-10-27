@@ -6,6 +6,7 @@ export const trialLabels: Record<string, string> = {
   pending: "待确认",
   confirmed: "已确认",
   attended: "已参加",
+  no_show: "未参加",
   cancelled: "已取消",
 };
 const localTime = (v: string) => {
@@ -16,8 +17,10 @@ const localTime = (v: string) => {
 };
 export function ReceptionStatus() {
   const [status, setStatus] = useState("offline"),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
   const counts = useResource<any>("/admin/reception-summary");
+  const toast = useToast();
   useEffect(() => {
     const beat = () =>
       api("/admin/presence", {
@@ -30,9 +33,26 @@ export function ReceptionStatus() {
     const timer = setInterval(() => {
       beat();
       counts.reload();
-    }, 30000);
+    }, 15000);
     return () => clearInterval(timer);
   }, [status]);
+  async function claimNext() {
+    setBusy(true);
+    try {
+      const row = await api("/admin/reception/claim-next", {
+        method: "POST",
+        body: JSON.stringify({ prefer_timed_out: true }),
+      });
+      toast("已接管排队会话");
+      counts.reload();
+      window.location.assign("/conversations?conversation_id=" + row.conversation_id);
+    } catch (e: any) {
+      toast(e.message, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const timed = counts.data?.timed_out || 0;
   return (
     <div className="reception-status">
       <label>
@@ -47,9 +67,19 @@ export function ReceptionStatus() {
           <option value="offline">离线</option>
         </select>
       </label>
-      <Link to="/conversations">
-        待接待 {counts.data?.waiting ?? "—"} · 未读 {counts.data?.unread ?? "—"}
+      <Link to="/conversations?status=waiting">
+        待接待 {counts.data?.waiting ?? "—"}
+        {timed > 0 ? ` · 超时 ${timed}` : ""} · 未读{" "}
+        {counts.data?.unread ?? "—"} · 我的接待{" "}
+        {counts.data?.my_active ?? "—"}
       </Link>
+      <button
+        className="button secondary small"
+        disabled={busy || !(counts.data?.waiting > 0)}
+        onClick={claimNext}
+      >
+        接下一位
+      </button>
       {error && <small role="alert">{error}</small>}
     </div>
   );
@@ -68,6 +98,7 @@ export function Trials({
     [advisor, setAdvisor] = useState(""),
     [time, setTime] = useState(""),
     [note, setNote] = useState(""),
+    [reason, setReason] = useState(""),
     [busy, setBusy] = useState(false);
   const list = useResource<any>(
       `/admin/trials?include_demo=${includeDemo}&status=${status}&page=${page}&page_size=20`,
@@ -78,27 +109,41 @@ export function Trials({
     setPage(1);
     setSelected(null);
   }, [status, includeDemo]);
-  function choose(t: any) {
-    setSelected(t);
-    setAdvisor(t.advisor_id || "");
-    setTime(localTime(t.scheduled_at || t.requested_at));
-    setNote(t.note || "");
+  async function choose(t: any) {
+    try {
+      const detail = await api("/admin/trials/" + t.id);
+      setSelected(detail);
+      setAdvisor(detail.advisor_id || "");
+      setTime(localTime(detail.scheduled_at || detail.requested_at));
+      setNote(detail.note || "");
+      setReason(detail.reason || "");
+    } catch (e: any) {
+      toast(e.message, true);
+    }
   }
   async function change(next: string) {
+    if ((next === "cancelled" || next === "no_show") && !reason.trim()) {
+      toast("取消或未参加须填写原因", true);
+      return;
+    }
     setBusy(true);
     try {
-      choose(
-        await api("/admin/trials/" + selected.id, {
-          method: "PATCH",
-          body: JSON.stringify({
-            version: selected.version,
-            status: next,
-            advisor_id: advisor || null,
-            scheduled_at: time ? new Date(time).toISOString() : null,
-            note,
-          }),
+      const detail = await api("/admin/trials/" + selected.id, {
+        method: "PATCH",
+        body: JSON.stringify({
+          version: selected.version,
+          status: next,
+          advisor_id: advisor || null,
+          scheduled_at: time ? new Date(time).toISOString() : null,
+          note,
+          reason: reason.trim(),
         }),
-      );
+      });
+      setSelected(detail);
+      setAdvisor(detail.advisor_id || "");
+      setTime(localTime(detail.scheduled_at || detail.requested_at));
+      setNote(detail.note || "");
+      setReason(detail.reason || "");
       list.reload();
       toast("试听状态已更新");
     } catch (e: any) {
@@ -111,7 +156,7 @@ export function Trials({
     <>
       <PageTitle
         title="试听预约"
-        description="核实班次、时间和联系许可后确认申请。演示课程不代表真实开班安排。"
+        description="与线索、学员档案同一业务链：确认/参加/未参加/取消会自动写跟进待办；改阶段与关联档案仍需顾问人工确认。"
       />
       <section className="panel">
         <div className="list-toolbar">
@@ -145,6 +190,7 @@ export function Trials({
               <thead>
                 <tr>
                   <th>课程 / 班次</th>
+                  <th>线索</th>
                   <th>意向时间</th>
                   <th>确认时间</th>
                   <th>顾问</th>
@@ -158,6 +204,13 @@ export function Trials({
                     <td>
                       {t.course_name}
                       <small className="cell-sub">{t.batch_name}</small>
+                    </td>
+                    <td>
+                      {t.lead_name || "—"}
+                      <small className="cell-sub">
+                        {t.lead_stage || ""}
+                        {t.student_name ? ` · 学员 ${t.student_name}` : ""}
+                      </small>
                     </td>
                     <td>{date(t.requested_at, true)}</td>
                     <td>
@@ -205,11 +258,36 @@ export function Trials({
           <h2>
             {selected.course_name} · {trialLabels[selected.status]}
           </h2>
-          <Link
-            to={"/conversations?conversation_id=" + selected.conversation_id}
-          >
-            查看咨询与联系许可
-          </Link>
+          <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
+            <Link
+              to={"/conversations?conversation_id=" + selected.conversation_id}
+            >
+              查看咨询
+            </Link>
+            {selected.lead_id && (
+              <Link to={"/leads?lead_id=" + selected.lead_id}>
+                线索：{selected.lead_name}（{selected.lead_stage}）
+              </Link>
+            )}
+            {selected.student_id && (
+              <Link to={"/customers?student_id=" + selected.student_id}>
+                学员：{selected.student_name || selected.student_id}
+              </Link>
+            )}
+            {selected.next_followup_at && (
+              <span>下次跟进 {date(selected.next_followup_at, true)}</span>
+            )}
+          </div>
+          {selected.auto_todo_rule && (
+            <p className="muted">自动待办：{selected.auto_todo_rule}</p>
+          )}
+          {!!selected.manual_actions?.length && (
+            <ul className="muted">
+              {selected.manual_actions.map((a: string) => (
+                <li key={a}>{a}</li>
+              ))}
+            </ul>
+          )}
           <label>
             接待顾问
             <select
@@ -245,6 +323,15 @@ export function Trials({
               maxLength={1000}
             />
           </label>
+          <label>
+            取消 / 未参加原因
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={1000}
+              placeholder="取消或标记未参加时必填"
+            />
+          </label>
           <div className="actions">
             {["pending", "confirmed"].includes(selected.status) && (
               <>
@@ -256,17 +343,26 @@ export function Trials({
                   确认时间与顾问
                 </button>
                 {selected.status === "confirmed" && (
-                  <button
-                    className="button secondary"
-                    disabled={busy}
-                    onClick={() => change("attended")}
-                  >
-                    记录已参加
-                  </button>
+                  <>
+                    <button
+                      className="button secondary"
+                      disabled={busy}
+                      onClick={() => change("attended")}
+                    >
+                      记录已参加
+                    </button>
+                    <button
+                      className="button secondary"
+                      disabled={busy || !reason.trim()}
+                      onClick={() => change("no_show")}
+                    >
+                      记录未参加
+                    </button>
+                  </>
                 )}
                 <button
                   className="button secondary"
-                  disabled={busy}
+                  disabled={busy || !reason.trim()}
                   onClick={() => change("cancelled")}
                 >
                   取消预约
@@ -274,11 +370,25 @@ export function Trials({
               </>
             )}
           </div>
+          {!!selected.followups?.length && (
+            <div>
+              <h3>线索跟进记录</h3>
+              <ul>
+                {selected.followups.map((f: any) => (
+                  <li key={f.id}>
+                    <strong>{f.author}</strong> · {date(f.created_at, true)}
+                    <div>{f.content}</div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
     </>
   );
 }
+
 export function WidgetTrial({
   credential,
   hasContact,

@@ -251,6 +251,9 @@ function Gaps({ version }: { version: number }) {
     </>
   );
 }
+function moneyOrUnknown(v: number | null | undefined) {
+  return v === null || v === undefined ? "未知" : "¥" + Number(v).toFixed(4);
+}
 function Usage({ version }: { version: number }) {
   const r = useResource<any>("/admin/quality/usage", version),
     toast = useToast();
@@ -261,26 +264,36 @@ function Usage({ version }: { version: number }) {
       output: "",
       daily_budget: "",
       monthly_budget: "",
+      enforce_over_budget: false,
     }),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (r.data?.pricing?.model) setForm(r.data.pricing);
+    if (r.data?.pricing?.model)
+      setForm({
+        ...r.data.pricing,
+        enforce_over_budget: !!r.data.pricing.enforce_over_budget,
+      });
   }, [r.data]);
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
+      const payload: Record<string, any> = {};
+      for (const [k, v] of Object.entries(form)) {
+        if (k === "updated_at") continue;
+        if (k === "enforce_over_budget") payload[k] = !!v;
+        else if (k === "model") payload[k] = v;
+        else payload[k] = Number(v);
+      }
       await api("/admin/quality/budget", {
         method: "PUT",
-        body: JSON.stringify(
-          Object.fromEntries(
-            Object.entries(form)
-              .filter(([k]) => k !== "updated_at")
-              .map(([k, v]) => [k, k === "model" ? v : Number(v)]),
-          ),
-        ),
+        body: JSON.stringify(payload),
       });
-      toast("单价与预算已保存，仅影响之后的调用估算");
+      toast(
+        payload.enforce_over_budget
+          ? "单价与预算已保存，并已显式启用超预算降级"
+          : "单价与预算已保存（超预算仅告警，不自动降级）",
+      );
       r.reload();
     } catch (e: any) {
       toast(e.message, true);
@@ -305,8 +318,20 @@ function Usage({ version }: { version: number }) {
             {d.daily_alert ? "今日" : ""}
             {d.daily_alert && d.monthly_alert ? "及" : ""}
             {d.monthly_alert ? "本月" : ""}
-            估算费用已达到预算，请核对供应商账单。
+            估算费用已达到预算
+            {d.enforce_over_budget
+              ? "；已启用降级，新对话将改用资料摘录。"
+              : "，请核对供应商账单（当前仅告警，未自动停止调用）。"}
           </div>
+        )}
+        {d.anomaly_growth && (
+          <div className="error-box" role="status">
+            {d.anomaly_growth.message} 今日 Token {d.anomaly_growth.today_tokens}
+            ，近有记录日均约 {d.anomaly_growth.avg_tokens}。
+          </div>
+        )}
+        {d.currently_degraded && (
+          <p className="footnote">当前处于超预算降级状态，付费模型调用已暂停。</p>
         )}
         <p>{d.billing_note}</p>
         <dl className="usage-facts">
@@ -318,13 +343,13 @@ function Usage({ version }: { version: number }) {
           </div>
           <div>
             <dt>已知 Token</dt>
-            <dd>{d.tokens.toLocaleString()}</dd>
+            <dd>{Number(d.tokens || 0).toLocaleString()}</dd>
           </div>
           <div>
             <dt>今日 / 本月可估算部分</dt>
             <dd>
-              ¥{d.daily_estimated_cny.toFixed(4)} / ¥
-              {d.monthly_estimated_cny.toFixed(4)}
+              {moneyOrUnknown(d.daily_estimated_cny)} /{" "}
+              {moneyOrUnknown(d.monthly_estimated_cny)}
             </dd>
           </div>
           <div>
@@ -334,11 +359,63 @@ function Usage({ version }: { version: number }) {
             </dd>
           </div>
         </dl>
-        {d.unpriced_calls > 0 && (
+        {(d.unpriced_calls > 0 || !d.pricing_ready) && (
           <p className="footnote">
-            存在无法估价的调用，上述金额不代表完整费用；未完成或中断的调用也可能产生供应商费用。
+            {!d.pricing_ready
+              ? "尚未配置匹配模型的单价，费用显示为未知，不能视为免费。"
+              : "存在无法估价的调用，上述金额不代表完整费用；未完成或中断的调用也可能产生供应商费用。"}
           </p>
         )}
+        <h3>近 14 日用量趋势</h3>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>调用</th>
+                <th>Token</th>
+                <th>已估价</th>
+                <th>估算费用</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(d.trend_daily || []).map((row: any) => (
+                <tr key={row.date}>
+                  <td>{row.date}</td>
+                  <td>{row.calls}</td>
+                  <td>
+                    {row.unknown_usage_calls && !row.tokens
+                      ? "未知"
+                      : Number(row.tokens || 0).toLocaleString()}
+                  </td>
+                  <td>
+                    {row.priced_calls}/{row.calls}
+                  </td>
+                  <td>{moneyOrUnknown(row.estimated_cny)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <h3>账单对账辅助</h3>
+        <p>{d.reconciliation?.note}</p>
+        <dl className="usage-facts">
+          <div>
+            <dt>已估价调用</dt>
+            <dd>{d.reconciliation?.priced_calls ?? 0}</dd>
+          </div>
+          <div>
+            <dt>未估价 / 未知用量</dt>
+            <dd>
+              {d.reconciliation?.unpriced_calls ?? 0} /{" "}
+              {d.reconciliation?.unknown_usage_calls ?? 0}
+            </dd>
+          </div>
+          <div>
+            <dt>站内已估合计</dt>
+            <dd>{moneyOrUnknown(d.reconciliation?.estimated_cny_sum)}</dd>
+          </div>
+        </dl>
         <div className="table-scroll">
           <table>
             <thead>
@@ -369,12 +446,12 @@ function Usage({ version }: { version: number }) {
                       {errors[c.error_type] || ""}
                     </small>
                   </td>
-                  <td>{c.usage.total_tokens ?? "未知"}</td>
+                  <td>{c.usage?.total_tokens ?? "未知"}</td>
                   <td>{c.latency_ms} ms</td>
                   <td>
-                    {c.estimated_cny === null
-                      ? "无法估价"
-                      : "¥" + c.estimated_cny.toFixed(6)}
+                    {c.estimated_cny === null || c.estimated_cny === undefined
+                      ? "未知"
+                      : "¥" + Number(c.estimated_cny).toFixed(6)}
                   </td>
                 </tr>
               ))}
@@ -388,8 +465,8 @@ function Usage({ version }: { version: number }) {
       <form className="panel quality-editor" onSubmit={save}>
         <h2>估算单价与预算</h2>
         <p>
-          请按当前供应商账单填写，单价单位为人民币 / 百万
-          Token。只对匹配模型的新调用估算，历史记录保留调用时单价。
+          请按当前供应商账单填写并定期核对，单价单位为人民币 / 百万
+          Token。只对匹配模型的新调用估算，历史记录保留调用时单价。未配置单价或未收到用量时显示「未知」，不能当作免费。
         </p>
         <div className="form-grid">
           {[
@@ -413,8 +490,18 @@ function Usage({ version }: { version: number }) {
             </label>
           ))}
         </div>
+        <label className="checkbox-line">
+          <input
+            type="checkbox"
+            checked={!!form.enforce_over_budget}
+            onChange={(e) =>
+              setForm({ ...form, enforce_over_budget: e.target.checked })
+            }
+          />
+          显式启用超预算降级（默认关闭；开启后达到日/月预算时新对话改为资料摘录，不再调用付费模型）
+        </label>
         <button className="button" disabled={busy}>
-          保存单价与告警预算
+          保存单价与预算策略
         </button>
       </form>
     </>

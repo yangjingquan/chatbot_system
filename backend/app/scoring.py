@@ -1,34 +1,88 @@
-"""Replay explicit user events; cancellation and service context persist across neutral turns."""
+"""Rule-based intent scoring for follow-up assist; not a close-probability model."""
 import re
 
-RULE_VERSION = 'training-v4'
+RULE_VERSION = 'training-v5'
 EXAMS = ('公安联考','国考','省考','选调生','事业单位','社会招警','辅警','社区工作者')
 EXAM_PATTERN = re.compile(r'公安联考|(?:公务员)?国考|(?:公务员)?省考|选调生|事业单位|事业编|社会招警|辅警|社区工作者')
-NEGATIVE = re.compile(r'不想|不需要|不用|不打算|不考虑|不要|暂不|不是|没打算|不感兴趣|取消|不考')
-WITHDRAW_CONTACT = re.compile(r'(不用|不要|别|停止|不需要|不再).{0,5}联系|撤回.{0,8}(同意|授权|联系)')
-REJECT_PURCHASE = re.compile(r'(?:不打算|不想|不考虑|没打算|不再|暂不|取消|不准备|不需要|不要).{0,5}(?:报名|报班|购买|采购|报考)|不(?:报名|报班|报了|考了)|不考.{0,10}(?:联考|国考|省考|选调|事业|招警|辅警|社区)|暂时不报|不感兴趣')
+NEGATIVE = re.compile(r'不想|不需要|不用|不打算|不考虑|不要|暂不|不是|没打算|不感兴趣|取消|不考|没兴趣')
+DOUBLE_NEG = re.compile(r'不是不|并非不')
+WITHDRAW_CONTACT = re.compile(
+    r'(?:不用|不要|别|停止|不需要|不再|请勿).{0,8}(?:联系|打电话|来电|致电|电话)|'
+    r'(?:撤回|取消).{0,8}(?:同意|授权|联系)|'
+    r'(?:别|不要|不用).{0,4}(?:给我)?.{0,2}(?:打电话|来电|致电)'
+)
+REJECT_PURCHASE = re.compile(
+    r'(?:不打算|不想|不考虑|没打算|不再|暂不|取消|不准备|不需要|不要|没兴趣).{0,8}'
+    r'(?:报名|报班|购买|采购|报考|考(?:公安联考|国考|省考|选调|事业|招警|辅警|社区)?)|'
+    r'不(?:报名|报班|报了|考了|想报了)|'
+    r'不考.{0,10}(?:公安联考|国考|省考|选调|事业|招警|辅警|社区)|'
+    r'(?:公安联考|国考|省考|选调生|事业单位|事业编|社会招警|辅警|社区工作者).{0,8}'
+    r'(?:不打算|不想|不考虑|没打算|不考了|不报了|不报|不感兴趣)|'
+    r'暂时不报|不感兴趣|没兴趣(?:报名|报班)?'
+)
 NEED = re.compile(r'想报|准备|备考|想学|要考|想了解|想考|打算|改考|转考|零基础')
-ACTION = re.compile(r'报价|多少钱|怎么收费|价格多少|想报名|要报名|准备报名|想报|还是想报名|预约|试听|顾问联系')
+ACTION = re.compile(
+    r'报价|多少钱|怎么收费|价格多少|价格|收费|费用|询价|'
+    r'想报名|要报名|准备报名|想报|还是想报名|预约|试听|顾问联系'
+)
 SERVICE = re.compile(r'退费|退款|投诉|无法听课|课件打不开|转班|发票|已经报[过了]名|已购')
 SWITCH = re.compile(r'改考|转考|换成|改成|改为|转为')
+# Same-clause after-sales + new purchase (e.g. 投诉之后还想报国考班).
+SERVICE_THEN_PURCHASE = re.compile(
+    r'(?:另外|除此之外|还想|同时还|同时想|不过还|但是还)?.{0,6}'
+    r'(?:想报|准备报|要报名|想报名|还想报).{0,24}(?:班|课程|培训)?'
+)
+# Soft explore only — not a hard decline of a named need.
+SOFT_EXPLORE_ONLY = re.compile(r'(?:先不|先暂时不).{0,4}(?:报名|报班)|只是(?:问问|了解|咨询)')
+LEVEL_RANK = {'高意向':3,'中意向':2,'低意向':1,'一般咨询':0,'待判定':0,'不适用':0}
 
 def exam_names(text):
     return list(dict.fromkeys('事业单位' if m=='事业编' else m.replace('公务员','') for m in EXAM_PATTERN.findall(text)))
 
-def _level(score, action):
+def _level(score, action, named_exam=False):
     if score>=70 and action:return '高意向'
-    if score>=40:return '中意向'
+    # Named exam + concrete action is at least mid intent for follow-up assist.
+    if score>=40 or (action and named_exam and score>=25):return '中意向'
     return '低意向'
+
+def _confidence(level, score, evidence, purpose, purchase_state):
+    """Heuristic certainty for UI; not a calibrated probability."""
+    labels={e.get('label') for e in evidence}
+    if purpose=='售后服务' and level=='不适用':
+        return 'high','售后场景由规则判定为不适用销售等级；分数仅作跟进辅助',[]
+    if purchase_state=='declined':
+        return 'high','访客出现明确拒绝/暂不考虑表述；仍可人工改级',[]
+    if level=='待判定':
+        return 'low','有效购买信号不足，保持待判定',[]
+    if level=='高意向':
+        if score>=85 and len(labels)>=3:
+            return 'medium','多类明确信号叠加；非成交概率，需人工核实',[]
+        return 'medium','达到高意向阈值但样本未校准；建议人工确认',[]
+    if level=='中意向':
+        notes=[]
+        if score<=50 and labels & {'预约试听','主动询价','主动咨询课程'}:
+            notes.append('主要依赖咨询行动信号')
+        return 'medium','中意向为跟进辅助分级，存在漏判/误判空间',notes
+    if level=='一般咨询':
+        return 'medium','有考试关注但采购信号弱或已拒绝',[]
+    return 'low','信号较弱或边界表述，建议人工复核',[]
+
+def _pick_overall_level(active):
+    preferred=[n for n in active if n['exam_type']!='未指定考试'] or active
+    return max(preferred, key=lambda n:(n['score'], LEVEL_RANK.get(n['level'],0)))['level']
 
 def analyze_messages(messages: list[dict], contactable: bool=False, respect_withdrawal: bool=True) -> dict:
     needs, services, focus, events, purposes = {}, {}, [], [], []
     purpose='课程咨询'
+    withdrew=False
     def need(exam):
         return needs.setdefault(exam,{'exam_type':exam,'purpose':'课程咨询','state':'active','signals':{},'actions':{},'rejection':None})
     for message in messages:
         content=message['content']
         mid=message.get('id')
-        if respect_withdrawal and WITHDRAW_CONTACT.search(content):contactable=False
+        if respect_withdrawal and WITHDRAW_CONTACT.search(content):
+            contactable=False
+            withdrew=True
         for clause in re.split(r'[，。！？；\n,!?;]|但是|不过|另外|但',content):
             clause=clause.strip()
             if not clause:continue
@@ -40,34 +94,54 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
                 focus=names
             targets=names or focus or ['未指定考试']
             proof={'quote':clause[:180],'message_id':mid}
+            soft_explore=bool(SOFT_EXPLORE_ONLY.search(clause))
+            double_neg=bool(DOUBLE_NEG.search(clause))
             # "不要取消报名" is not a new cancellation.
             rejection=REJECT_PURCHASE.search(clause) and not re.search(r'(?:不要|不用|不是|并非).{0,3}(?:取消|不报|不考)',clause)
-            if rejection:
+            if rejection and not soft_explore and not double_neg:
                 cancelled=names or list(needs) or targets
                 for target in cancelled:
                     need(target).update(state='declined',signals={},actions={},rejection={**proof,'label':'最新明确拒绝','points':0})
                 events.append({**proof,'kind':'purchase_declined','exam_types':cancelled})
                 purpose='课程咨询'
                 continue
-            cancel_trial=re.search(r'(取消|不想|不用|不需要|不要).{0,5}(试听|预约)',clause)
-            cancel_quote=re.search(r'(取消|不想|不用|不需要|不要).{0,5}(询价|报价)',clause)
-            for target in targets:
-                if target in needs:
-                    if cancel_trial:needs[target]['actions'].pop('trial',None)
-                    if cancel_quote:needs[target]['actions'].pop('quote',None)
-            if NEGATIVE.search(clause):continue
-            if SERVICE.search(clause):
-                purpose='售后服务'
-                if purpose not in purposes:purposes.append(purpose)
+            cancel_trial=cancel_quote=None
+            if not double_neg:
+                cancel_trial=re.search(r'(取消|不想|不用|不需要|不要).{0,5}(试听|预约)',clause)
+                cancel_quote=re.search(r'(取消|不想|不用|不需要|不要).{0,5}(询价|报价|价格|收费)',clause)
                 for target in targets:
-                    services[target]={'exam_type':target,'purpose':purpose,'state':'active','evidence':[{**proof,'label':purpose,'points':0}]}
+                    if target in needs:
+                        if cancel_trial:needs[target]['actions'].pop('trial',None)
+                        if cancel_quote:needs[target]['actions'].pop('quote',None)
+                # Pure cancel clause must not re-emit the cancelled action via ACTION keywords.
+                if cancel_trial and not re.search(r'(?:还是|仍然|继续|想报|报名|报价|价格|收费|费用)',clause):
+                    continue
+                if cancel_quote and not re.search(r'(?:还是|仍然|继续|想报|报名|试听|预约)',clause):
+                    continue
+            # Pure double-neg without a clearer positive restatement — wait for a later clause.
+            if double_neg and not re.search(r'(?:还是|其实|是).{0,4}(?:想|要|准备|预约)',clause):
+                continue
+            if NEGATIVE.search(clause) and not soft_explore and not double_neg:
+                if not (NEED.search(clause) or ACTION.search(clause)) or rejection:
+                    continue
+            if SERVICE.search(clause):
+                purchase_tail=bool(SERVICE_THEN_PURCHASE.search(clause))
+                if not purchase_tail:
+                    purpose='售后服务'
+                    if purpose not in purposes:purposes.append(purpose)
+                    for target in targets:
+                        services[target]={'exam_type':target,'purpose':purpose,'state':'active','evidence':[{**proof,'label':purpose,'points':0}]}
+                    continue
+                if '售后服务' not in purposes:purposes.append('售后服务')
+                for target in targets:
+                    services.setdefault(target,{'exam_type':target,'purpose':'售后服务','state':'active','evidence':[{**proof,'label':'售后服务','points':0}]})
+            if NEGATIVE.search(clause) and not double_neg and not (NEED.search(clause) or ACTION.search(clause)):
                 continue
             explicit_need=bool(NEED.search(clause)) and (bool(names) or bool(focus) or '零基础' in clause)
             explicit_action=bool(ACTION.search(clause))
-            new_course=(explicit_need or explicit_action) and (bool(names) or bool(re.search(r'课程|培训|报班|报名|备考|考班|基础班|笔试班|面试班|试听',clause)))
+            new_course=(explicit_need or explicit_action) and (bool(names) or bool(re.search(r'课程|培训|报班|报名|备考|考班|基础班|笔试班|面试班|试听|价格|收费|费用|报价',clause)))
             if purpose=='售后服务':
                 if not new_course:continue
-                # A new course after a service episode must provide its own purchase evidence.
                 for target in targets:
                     if target in needs:needs[target].update(signals={},actions={},state='active',rejection=None)
                 purpose='课程咨询'
@@ -85,7 +159,7 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
                     events.append({**proof,'kind':'purchase_reopened','exam_types':[target]})
                 if explicit_need:n['signals']['need']={**proof,'label':'明确需求','points':25}
                 if explicit_action:
-                    if re.search(r'报价|多少钱|收费|价格',clause):n['actions']['quote']={**proof,'label':'主动询价','kind':'quote'}
+                    if re.search(r'报价|多少钱|收费|价格|费用|询价',clause):n['actions']['quote']={**proof,'label':'主动询价','kind':'quote'}
                     if re.search(r'试听|预约',clause):n['actions']['trial']={**proof,'label':'预约试听','kind':'trial'}
                     if re.search(r'想报|要报名|准备报名|顾问联系',clause):n['actions']['enroll']={**proof,'label':'主动咨询课程','kind':'enroll'}
                 if re.search(r'下个?月|本月|这个月|下周|近期|尽快|马上|今年.{0,5}(考试|报考)|\d+月.{0,6}(考试|报考)',clause):
@@ -98,9 +172,15 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
     score=0
     for n in needs.values():
         action_evidence=[{**p,'points':25 if i==0 else 0,'group':'咨询行动（同组不重复计分）'} for i,p in enumerate(n['actions'].values())]
-        n['evidence']=list(n['signals'].values())+action_evidence if n['state']=='active' else ([n['rejection']] if n['rejection'] else [])
-        n['score']=min(100,sum(e['points'] for e in n['evidence'])+(15 if contactable and n['state']=='active' else 0))
-        n['level']=_level(n['score'],bool(n['actions'])) if n['state']=='active' and (n['signals'] or n['actions']) else '一般咨询'
+        named=n['exam_type']!='未指定考试'
+        if n['state']=='active' and (n['signals'] or action_evidence):
+            n['evidence']=list(n['signals'].values())+action_evidence
+            n['score']=min(100,sum(e['points'] for e in n['evidence'])+(15 if contactable else 0))
+            n['level']=_level(n['score'],bool(action_evidence),named)
+        else:
+            n['evidence']=[n['rejection']] if n['rejection'] else []
+            n['score']=0
+            n['level']='一般咨询'
         if n['state']=='active':
             score=max(score,n['score'])
             evidence+=n['evidence']
@@ -116,20 +196,26 @@ def analyze_messages(messages: list[dict], contactable: bool=False, respect_with
         level='一般咨询';score=0;purchase_state='declined';tags.append('暂不考虑')
         evidence=[e for n in needs.values() for e in n['evidence']]
     elif active:
-        level=max(active,key=lambda n:n['score'])['level']
+        level=_pick_overall_level(active)
         purchase_state='interested' if evidence else 'exploring'
     else:
         level='一般咨询' if contactable else '待判定';purchase_state='unknown'
+    if withdrew and '已停止联系' not in tags:
+        tags.append('已停止联系')
+        evidence.append({'label':'拒绝继续联系','quote':'访客明确要求停止联系或撤回授权','points':0,'message_id':None,'source':'contact_withdrawal'})
     if contactable:
         tags.append('可联系')
         if not declined and purpose!='售后服务':
             evidence.append({'label':'联系授权','quote':'访客已提交本次需求联系许可，联系方式尚待人工核实','points':15,'message_id':None,'source':'contact_consent'})
     if not purposes:purposes=['课程咨询']
+    conf,uncertainty,notes=_confidence(level,score,evidence,purpose,purchase_state)
     return {'purpose':purpose,'purposes':purposes,'purchase_state':purchase_state,'score':score,'level':level,
             'tags':list(dict.fromkeys(tags)),'evidence':evidence,'contactable':contactable,
             'needs':list(needs.values())+list(services.values()),
             'active_exam_types':[n['exam_type'] for n in active if n['exam_type']!='未指定考试'],
-            'state_events':events,'rule_version':RULE_VERSION}
+            'state_events':events,'rule_version':RULE_VERSION,
+            'classifier':'rules','score_role':'followup_assist',
+            'confidence':conf,'uncertainty':uncertainty,'confidence_notes':notes}
 
 def analyze_intent(text: str, contactable: bool=False) -> dict:
     return analyze_messages([{'id':None,'content':line} for line in text.split('\n') if line.strip()],contactable)

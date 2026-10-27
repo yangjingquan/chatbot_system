@@ -11,7 +11,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
-from .models import Admin, Company, Student, StudentInterest, Course, Lead, Conversation, FollowUp, Audit, now
+from .models import Admin, Company, Student, StudentInterest, Course, Lead, Conversation, FollowUp, Audit, Trial, now
 from .permissions import require, scoped_object, scope_students, scope_leads, check_permission
 from .querying import BusinessFilters, Paging, common, json_has, lead_query, paginate
 from .documents import Exam
@@ -44,6 +44,9 @@ def student_data(db,s,full=False,user=None):
         result['contacts']=[{'contact':l.contact,'verified':l.contact_verified,'contact_allowed':l.contact_allowed,'source_lead_id':l.id} for l in leads]
         result['interests']=[{'id':i.id,'exam_type':i.exam_type,'course_id':i.course_id,'course_name':(db.get(Course,i.course_id).name if i.course_id and db.get(Course,i.course_id) else ''),'target_year':i.target_year,'status':i.status,'notes':i.notes} for i in db.scalars(select(StudentInterest).where(StudentInterest.student_id==s.id))]
         result['followups']=[{'id':f.id,'lead_id':f.lead_id,'content':f.content,'author':f.author,'created_at':f.created_at.isoformat()} for f in db.scalars(select(FollowUp).where(FollowUp.lead_id.in_([l.id for l in leads])).order_by(FollowUp.created_at.desc()))] if leads else []
+        from .reception import trial_data
+        conv_ids=[l.conversation_id for l in leads]
+        result['trials']=[trial_data(db,t) for t in db.scalars(select(Trial).where(Trial.conversation_id.in_(conv_ids)).order_by(Trial.created_at.desc()))] if conv_ids else []
     return result
 
 def audit(db,user,action,key,details=''):db.add(Audit(tenant_id=user.tenant_id,actor=user.name,action=action,target=key,details=details))

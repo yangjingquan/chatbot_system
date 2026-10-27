@@ -3280,3 +3280,24 @@ tbody tr:hover {
   gap: 14px;
   max-width: 520px;
 }
+
+
+.reception-pulse {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.reception-pulse small { color: var(--muted, #6b7280); }
+.handoff-note {
+  margin: 4px 0 0;
+  color: #92400e;
+  background: #fffbeb;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.canned-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}

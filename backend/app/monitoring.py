@@ -278,6 +278,24 @@ def check_backup(db: Session, tenant_id: str = TENANT) -> dict:
     }
 
 
+def check_schema(db: Session | None = None) -> dict:
+    """Compare DB schema_migrations with the revision expected by running code."""
+    try:
+        from .migrations import applied_schema_version, expected_schema_version, MIGRATION_NOTES
+        from .db import engine
+        applied = applied_schema_version(engine)
+        expected = expected_schema_version()
+        current = applied >= expected
+        return {
+            'status': 'ok' if current else 'fail',
+            'applied': applied,
+            'expected': expected,
+            'note': MIGRATION_NOTES.get(expected, ''),
+        }
+    except Exception as exc:
+        return {'status': 'fail', 'detail': redact_log(str(exc))[:200]}
+
+
 def collect_status(db: Session, tenant_id: str = TENANT) -> dict:
     lat = latency_stats()
     lat_status = 'fail' if (lat.get('p95_ms') or 0) >= LATENCY_WARN_MS else 'ok'
@@ -291,6 +309,7 @@ def collect_status(db: Session, tenant_id: str = TENANT) -> dict:
         'latency': {**lat, 'status': lat_status},
         'disk': check_disk(),
         'backup': check_backup(db, tenant_id),
+        'schema': check_schema(db),
     }
     ranks = {'ok': 0, 'skipped': 0, 'unknown': 1, 'warn': 2, 'fail': 3}
     worst = max((ranks.get(c.get('status', 'ok'), 0) for c in components.values()), default=0)
@@ -312,6 +331,7 @@ ALERT_DEFS = {
     'backup_failed': ('critical', '备份检查失败或备份过旧'),
     'redis_down': ('warning', 'Redis 不可用，已回退内存限流'),
     'database_down': ('critical', '数据库连接异常'),
+    'schema_lag': ('critical', '数据库 schema 版本落后于运行代码'),
 }
 
 
@@ -378,6 +398,9 @@ def evaluate_alerts(db: Session, tenant_id: str = TENANT) -> dict:
     backup = c['backup']
     bump('backup_failed', backup['status'] == 'fail',
          backup.get('detail', '备份异常'), backup)
+    schema = c.get('schema') or {}
+    bump('schema_lag', schema.get('status') == 'fail',
+         f"schema applied={schema.get('applied')} expected={schema.get('expected')}", schema)
 
     for row in raised:
         if row.notify_state == 'pending':

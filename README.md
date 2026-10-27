@@ -35,6 +35,19 @@ docker compose start
 
 停止不会删除资料。不要使用 `docker compose down -v`，除非确实要删除此项目的持久化数据库和模型缓存。日志可能包含业务错误和文件名，分享前检查脱敏。
 
+## 测试与升级门禁
+
+本地重复执行与发布前检查：
+
+```bash
+make test-core          # 接口 / 权限 / 聊天 / 试听 / 知识 / schema
+make release-gate       # 核心 + 全量后端 + 前端；失败即停止发布
+make pre-upgrade        # 健康检查 → 备份 → 校验
+make upgrade-rehearsal  # 备份恢复到隔离库后迁移并跑门禁
+```
+
+说明见 [docs/自动化测试与升级流程.md](docs/自动化测试与升级流程.md)。后端依赖已 pin 在 `backend/requirements.txt`；CI 见 `.github/workflows/ci.yml`（不含真实密钥）。
+
 ## DeepSeek
 
 在 `.env` 中配置：

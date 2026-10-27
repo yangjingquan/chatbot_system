@@ -23,6 +23,14 @@ DEFAULT_CONFIG = {
     'retention_lead_days': 730,
     'retention_audit_days': 1095,
     'retention_backup_days': 90,
+    'reception_assign_mode': 'manual',
+    'reception_max_active': 5,
+    'reception_wait_timeout_seconds': 300,
+    'canned_replies': [
+        {'id': 'canned-welcome', 'title': '接待开场', 'content': '您好，我是人工客服，已接替机器人继续为您服务，请问还需要补充哪些信息？'},
+        {'id': 'canned-wait', 'title': '稍等核实', 'content': '好的，我先帮您核实一下，请稍等片刻。'},
+        {'id': 'canned-trial', 'title': '试听引导', 'content': '您可以在对话中申请试听，留下本次咨询的联系方式后，顾问会与您确认时间。'},
+    ],
     'knowledge_seeded': False,
 }
 
@@ -63,8 +71,10 @@ def seed(db):
     for i, (name, question, page, owner, stage) in enumerate(examples):
         stamp = now() - timedelta(days=i, hours=1)
         analysis = analyze_intent(question, True)
+        waiting = i == 3
         conv = Conversation(visitor_name=name, source_page=page, token_hash=digest(secrets.token_urlsafe(32)),
-                            analysis=analysis, status='waiting' if i == 3 else 'bot', is_demo=True, created_at=stamp, updated_at=stamp)
+                            analysis=analysis, status='waiting' if waiting else 'bot',
+                            waiting_since=stamp if waiting else None, is_demo=True, created_at=stamp, updated_at=stamp)
         db.add(conv)
         db.flush()
         db.add(Message(conversation_id=conv.id, role='user', content=question, created_at=stamp))

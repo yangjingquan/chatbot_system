@@ -30,6 +30,7 @@ export function Configuration({
   const [form, setForm] = useState<any>(null),
     [questions, setQuestions] = useState(""),
     [embedOrigins, setEmbedOrigins] = useState(""),
+    [cannedText, setCannedText] = useState(""),
     [retention, setRetention] = useState<any>(null),
     [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -37,6 +38,11 @@ export function Configuration({
       setForm(r.data);
       setQuestions(r.data.suggested_questions.join("\n"));
       setEmbedOrigins((r.data.allowed_embed_origins || []).join("\n"));
+      setCannedText(
+        (r.data.canned_replies || [])
+          .map((item: any) => `${item.title}\t${item.content}`)
+          .join("\n"),
+      );
     }
   }, [r.data]);
   useEffect(() => {
@@ -74,6 +80,22 @@ export function Configuration({
               .split("\n")
               .map((q) => q.trim())
               .filter(Boolean),
+            reception_assign_mode: form.reception_assign_mode || "manual",
+            reception_max_active: Number(form.reception_max_active) || 5,
+            reception_wait_timeout_seconds:
+              Number(form.reception_wait_timeout_seconds) || 300,
+            canned_replies: cannedText
+              .split("\n")
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .map((line) => {
+                const [title, ...rest] = line.split("\t");
+                return {
+                  title: (title || "").trim(),
+                  content: rest.join("\t").trim() || (title || "").trim(),
+                };
+              })
+              .filter((item) => item.title && item.content),
           }
         : {
             company_name: form.company_name,
@@ -178,6 +200,64 @@ export function Configuration({
                   onChange={(e) => setQuestions(e.target.value)}
                 />
                 <small>每行一个，最多 6 个，每个最多 150 字。</small>
+              </label>
+              <label>
+                人工分配规则
+                <select
+                  value={form.reception_assign_mode || "manual"}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      reception_assign_mode: e.target.value,
+                    })
+                  }
+                >
+                  <option value="manual">手动领取（默认）</option>
+                  <option value="least_busy">优先较少负载的在线客服</option>
+                </select>
+              </label>
+              <label>
+                每位客服同时接待上限
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={form.reception_max_active ?? 5}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      reception_max_active: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                排队超时提醒（秒）
+                <input
+                  type="number"
+                  min={30}
+                  max={86400}
+                  value={form.reception_wait_timeout_seconds ?? 300}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      reception_wait_timeout_seconds: Number(e.target.value),
+                    })
+                  }
+                />
+                <small>超时会话会在接待摘要与列表中标出，便于发现积压。</small>
+              </label>
+              <label>
+                常用回复
+                <textarea
+                  rows={6}
+                  value={cannedText}
+                  onChange={(e) => setCannedText(e.target.value)}
+                  placeholder={"标题\t正文内容"}
+                />
+                <small>
+                  每行一条，标题与正文用 Tab 分隔；最多 40 条。客服可在咨询页一键填入。
+                </small>
               </label>
               <div className="inline-note">
                 <ShieldCheck size={18} />
