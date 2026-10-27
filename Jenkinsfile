@@ -171,20 +171,27 @@ pipeline {
             sleep 5
           done
           [ "$s" = healthy ]
-          # 本机 WEB_PORT
-          curl -fsS -o /dev/null -m 10 http://127.0.0.1:18086/api/health || curl -fsS -o /dev/null -m 10 http://127.0.0.1:18086/
-          # 经 shop-nginx
-          ok=0
+          # WEB_PORT：流水线跑在 Jenkins 容器内，127.0.0.1 是容器自己；用 host 网络探宿主机发布端口
+          web_ok=0
+          if docker run --rm --network host alpine:3.20 wget -qO- -T 10 http://127.0.0.1:18086/api/health >/dev/null; then
+            web_ok=1
+          elif docker run --rm --network host alpine:3.20 wget -qO /dev/null -T 10 http://127.0.0.1:18086/; then
+            web_ok=1
+          fi
+          # 经 shop-nginx（公网域名 Host）；与上面各自记结果，避免 set -e 早退漏检
+          nginx_ok=0
           for i in $(seq 1 18); do
             if docker exec shop-nginx wget -qO- -T 5 --no-check-certificate --header="Host: cs.nexbyte.top" https://127.0.0.1/api/health 2>/dev/null | grep -qiE "ok|healthy|status"; then
-              ok=1; break
+              nginx_ok=1; break
             fi
             if docker exec shop-nginx wget -qO /dev/null --no-check-certificate --header="Host: cs.nexbyte.top" https://127.0.0.1/ 2>/dev/null; then
-              ok=1; break
+              nginx_ok=1; break
             fi
             sleep 5
           done
-          if [ "$ok" != 1 ]; then echo "Verify failed: cs.nexbyte.top via shop-nginx"; exit 1; fi
+          if [ "$web_ok" != 1 ]; then echo "Verify failed: local WEB_PORT 18086 via docker --network host"; fi
+          if [ "$nginx_ok" != 1 ]; then echo "Verify failed: cs.nexbyte.top via shop-nginx"; fi
+          [ "$web_ok" = 1 ] && [ "$nginx_ok" = 1 ]
           docker stats --no-stream --format "{{.Name}} {{.MemUsage}}" $(docker ps -qf name=chatbot) || true
         '''
       }
