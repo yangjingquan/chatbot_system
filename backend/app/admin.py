@@ -39,12 +39,13 @@ def conversation_data(db, c, full=False, user=None):
         from .privacy import redact_text
         preview = redact_text(messages[-1].content)[:120] if messages else ''
         message_count = len(messages)
+        last_message_role = messages[-1].role if messages else None
     else:
-        preview, message_count = last_message_preview(db, c.id)
+        preview, message_count, last_message_role = last_message_preview(db, c.id)
         messages = None
     result = {'id':c.id, 'visitor_name':c.visitor_name, 'source_page':c.source_page, 'status':c.status,
               'analysis':c.analysis, 'assigned_to_id':c.assigned_to_id, 'is_demo':c.is_demo, 'created_at':c.created_at.isoformat(), 'updated_at':c.updated_at.isoformat(),
-              'last_message':preview, 'message_count':message_count}
+              'last_message':preview, 'last_message_role':last_message_role, 'message_count':message_count}
     result['unread_count']=unread(db,c,user)
     result['waiting_since']=c.waiting_since.isoformat() if c.waiting_since else None
     result['waiting_seconds']=waiting_seconds(c)

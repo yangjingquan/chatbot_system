@@ -46,7 +46,7 @@ def shanghai_day(db: Session, column):
 
 def token_total_expr(db: Session, usage_column):
     if dialect(db) == 'postgresql':
-        return func.coalesce(cast(usage_column['total_tokens'].astext, Integer), 0)
+        return func.coalesce(usage_column['total_tokens'].as_integer(), 0)
     return func.coalesce(cast(func.json_extract(usage_column, '$.total_tokens'), Integer), 0)
 
 def aware(value: datetime | None) -> datetime | None:
@@ -292,17 +292,17 @@ def reception_queue_stats(db: Session, user: Admin, wait_timeout_seconds: int) -
         'timed_out_ids': [c.id for c in timed_ids],
     }
 
-def last_message_preview(db: Session, conversation_id: str) -> tuple[str, int]:
-    """Return (preview text, message_count) without loading the full transcript."""
+def last_message_preview(db: Session, conversation_id: str) -> tuple[str, int, str | None]:
+    """Return preview, message count and role without loading the full transcript."""
     total = db.scalar(
         select(func.count()).select_from(Message).where(Message.conversation_id == conversation_id)
     ) or 0
     if not total:
-        return '', 0
+        return '', 0, None
     last = db.scalar(
         select(Message).where(Message.conversation_id == conversation_id)
         .order_by(Message.created_at.desc(), Message.id.desc()).limit(1)
     )
     from .privacy import redact_text
     preview = redact_text(last.content)[:120] if last else ''
-    return preview, int(total)
+    return preview, int(total), last.role if last else None

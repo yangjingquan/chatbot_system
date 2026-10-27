@@ -503,7 +503,8 @@ export function Chat() {
       <div className="chat-compose">
         <div className="chat-tools">
           <button
-            disabled={!credential || status === "human" || status === "waiting"}
+            disabled={!credential || status === "human" || status === "waiting" || status === "closed"}
+            title={status === "closed" ? "咨询已结束，请先新建咨询" : undefined}
             onClick={handoff}
           >
             <Headphones size={14} />

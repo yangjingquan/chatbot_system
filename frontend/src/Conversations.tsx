@@ -23,6 +23,7 @@ import {
   useToast,
 } from "./ui";
 import { connectReceptionSocket, pollMs } from "./receptionSocket";
+import { plainAssistantText } from "./messageText";
 
 
 function formatWait(seconds?: number | null) {
@@ -65,7 +66,7 @@ export function MessageBubble({
           )}
           {message.mode === "deepseek" && <Badge tone="blue">DeepSeek</Badge>}
         </div>
-        <div className="bubble">{message.content || "正在准备回答…"}</div>
+        <div className="bubble">{message.role === "assistant" ? plainAssistantText(message.content || "正在准备回答…") : message.content || "正在准备回答…"}</div>
         {message.sources?.length > 0 && (
           <details className="source-details">
             <summary>查看 {message.sources.length} 个知识来源</summary>
@@ -317,7 +318,7 @@ export function Conversations({
                   )}
                   <small>{date(v.updated_at)}</small>
                 </div>
-                <p>{v.last_message}</p>
+                <p>{v.last_message_role === "assistant" ? plainAssistantText(v.last_message || "") : v.last_message}</p>
                 <div className="row-between">
                   <span>{v.source_page}</span>
                   <Badge
@@ -429,7 +430,7 @@ export function Conversations({
                       </button>
                     </>
                   )}
-                  {detail.status !== "human" && canHandle && (
+                  {detail.status !== "human" && detail.status !== "closed" && canHandle && (
                     <button
                       className="button small"
                       disabled={busy}

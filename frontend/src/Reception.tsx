@@ -194,7 +194,9 @@ export function Trials({
             description="访客可在官网客服留下联系方式后申请试听。"
           />
         ) : (
-          <div className="table-scroll">
+          <>
+          <p className="table-scroll-hint">左右滚动查看完整试听申请表</p>
+          <div className="table-wrap trial-table" role="region" aria-label="试听申请列表，可横向滚动" tabIndex={0}>
             <table>
               <thead>
                 <tr>
@@ -242,6 +244,7 @@ export function Trials({
               </tbody>
             </table>
           </div>
+          </>
         )}
         <div className="list-toolbar">
           <span>共 {list.data?.total || 0} 条</span>

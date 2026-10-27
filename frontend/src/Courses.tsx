@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Save, X } from "lucide-react";
 import { api } from "./api";
 import { useAccess } from "./auth";
@@ -32,6 +32,13 @@ const saleLabels: Record<string, string> = {
   sold_out: "已满班",
   ended: "已结束",
 };
+const courseSnapshot = (c: any) => JSON.stringify(
+  c && [c.name, c.exam_type, String(c.hours), c.class_type, c.description, c.status],
+);
+const batchSnapshot = (b: any, price: string) => JSON.stringify(
+  b && [b.name, b.mode, b.location, b.schedule, b.starts_at, b.ends_at,
+    b.sale_status, b.price_from, b.price_until, price],
+);
 export function Courses({ version }: { version: number }) {
   const list = usePaged("/admin/courses", true, version),
     r = list.resource,
@@ -43,12 +50,34 @@ export function Courses({ version }: { version: number }) {
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const write = can("courses.write");
+  const originalCourse = useRef("null"), originalBatch = useRef("null");
+  const courseDirty = !!edit && courseSnapshot(edit) !== originalCourse.current;
+  const batchDirty = !!batch && batchSnapshot(batch, price) !== originalBatch.current;
+  function mayDiscard() {
+    return !(courseDirty || batchDirty) || window.confirm("有未保存的课程或班次修改，确定放弃吗？");
+  }
+  useEffect(() => {
+    if (!courseDirty && !batchDirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    const guardLink = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest("a[href]") as HTMLAnchorElement | null : null;
+      if (!link || link.target === "_blank" || link.origin !== window.location.origin || link.pathname === window.location.pathname) return;
+      if (!mayDiscard()) { event.preventDefault(); event.stopPropagation(); }
+    };
+    window.addEventListener("beforeunload", warn);
+    document.addEventListener("click", guardLink, true);
+    return () => { window.removeEventListener("beforeunload", warn); document.removeEventListener("click", guardLink, true); };
+  }, [courseDirty, batchDirty]);
   function select(c: any) {
+    originalCourse.current = courseSnapshot(c);
+    originalBatch.current = "null";
     setEdit({ ...c });
     setBatch(null);
     setError("");
   }
   async function open(id: string) {
+    if (!mayDiscard()) return;
     try {
       select(await api("/admin/courses/" + id));
     } catch (e: any) {
@@ -56,6 +85,7 @@ export function Courses({ version }: { version: number }) {
     }
   }
   async function saveCourse() {
+    if (batchDirty && !window.confirm("保存课程会关闭未保存的班次修改，确定放弃吗？")) return;
     setBusy(true);
     setError("");
     try {
@@ -85,6 +115,7 @@ export function Courses({ version }: { version: number }) {
     }
   }
   async function saveBatch() {
+    if (courseDirty && !window.confirm("保存班次会重新加载课程，未保存的课程修改将丢失，确定继续吗？")) return;
     setBusy(true);
     setError("");
     try {
@@ -111,8 +142,11 @@ export function Courses({ version }: { version: number }) {
     }
   }
   function editBatch(b: any) {
+    if (batchDirty && !window.confirm("当前班次有未保存的修改，确定放弃吗？")) return;
+    const nextPrice = b.price_cents == null ? "" : (b.price_cents / 100).toFixed(2);
+    originalBatch.current = batchSnapshot(b, nextPrice);
     setBatch({ ...b });
-    setPrice(b.price_cents == null ? "" : (b.price_cents / 100).toFixed(2));
+    setPrice(nextPrice);
     setError("");
   }
   return (
@@ -122,7 +156,7 @@ export function Courses({ version }: { version: number }) {
         description="统一维护课程、价格和开班安排；机器人实时读取有效业务数据。"
         actions={
           write && (
-            <button className="button" onClick={() => select(blankCourse())}>
+            <button className="button" onClick={() => { if (mayDiscard()) select(blankCourse()); }}>
               <Plus size={16} />
               新增课程
             </button>
@@ -218,7 +252,7 @@ export function Courses({ version }: { version: number }) {
               <button
                 className="icon-button"
                 aria-label="关闭课程详情"
-                onClick={() => setEdit(null)}
+                onClick={() => { if (mayDiscard()) { setEdit(null); setBatch(null); } }}
               >
                 <X size={18} />
               </button>

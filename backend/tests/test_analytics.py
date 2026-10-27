@@ -4,6 +4,7 @@ import io
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import Conversation, Lead, Message, Trial, CourseBatch
@@ -17,7 +18,8 @@ def _seed_chain(admin, marker, n=40):
     with SessionLocal() as db:
         batch = db.scalar(select(CourseBatch).where(CourseBatch.sale_status == 'open'))
         assert batch is not None, 'seed data must provide an open course batch'
-        stamp = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=1, hours=2)
+        yesterday = datetime.now(ZoneInfo('Asia/Shanghai')).date() - timedelta(days=1)
+        stamp = datetime.combine(yesterday, datetime.min.time(), tzinfo=ZoneInfo('Asia/Shanghai')).replace(hour=8).astimezone(timezone.utc)
         for i in range(n):
             c = Conversation(
                 visitor_name=f'{marker}{i}', token_hash='test', source_page=marker,
