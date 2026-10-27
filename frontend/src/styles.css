@@ -2156,6 +2156,12 @@ tbody tr:hover {
   margin: 0;
   line-height: 1.85;
 }
+.privacy-notice {
+  color: #5f738d;
+  background: #f3f7fc;
+  border-color: #d7e3f2;
+  margin-top: -4px;
+}
 .chat-compose {
   border-top: 1px solid #e6ebf2;
   padding: 10px 15px 9px;
@@ -3248,3 +3254,29 @@ tbody tr:hover {
 .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
 .form-grid>label{min-width:0}
 @media(max-width:640px){.form-grid{grid-template-columns:1fr}.quality-editor{padding:18px}.usage-facts{gap:20px}}
+
+
+/* Ops monitoring */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.metric-card {
+  border: 1px solid var(--border, #e3e7ed);
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
+}
+.status-dot.red { background: #d4534b; }
+.badge.red {
+  color: #a33b35;
+  background: #fcedec;
+  border-color: #f0d0cd;
+}
+.stack-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 520px;
+}

@@ -11,3 +11,7 @@ test-results/
 .DS_Store
 *.log
 *.tsbuildinfo
+backups/
+*.dump
+*.dump.enc
+*.json.enc

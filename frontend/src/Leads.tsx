@@ -120,6 +120,24 @@ export function Leads({
       setBusy(false);
     }
   }
+  async function withdrawContact() {
+    if (!detail?.contact_allowed) return;
+    if (!confirm("确认登记该线索已停止联系？此后待办将不再提醒外呼。")) return;
+    setBusy(true);
+    try {
+      await api("/admin/leads/" + detail.id + "/withdraw-contact", {
+        method: "POST",
+      });
+      const result = await api("/admin/leads/" + detail.id);
+      setDetail(result);
+      r.reload();
+      toast("已登记停止联系");
+    } catch (e: any) {
+      toast(e.message, true);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function addNote() {
     setBusy(true);
     try {
@@ -314,6 +332,15 @@ export function Leads({
                     ? "人工核验"
                     : "待核验"}
               </Badge>
+              {detail.contact_allowed && can("leads.write") && (
+                <button
+                  className="button secondary small"
+                  disabled={busy}
+                  onClick={withdrawContact}
+                >
+                  停止联系
+                </button>
+              )}
             </p>
             <div className="form-row">
               <label>

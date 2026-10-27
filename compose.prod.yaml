@@ -1,0 +1,29 @@
+# Production-oriented overlay. Does not enable TLS by itself.
+# Usage:
+#   1. Set PUBLIC_ORIGIN / COOKIE_SECURE / secrets in .env
+#   2. Place certificates and use deploy/nginx-tls.conf.example in front of `web`
+#      or terminate TLS at a cloud load balancer that forwards to web.
+#   3. docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+#
+# WARNING: Do not publish db/redis ports. Keep backend reachable only via the web/proxy hop.
+name: ${COMPOSE_PROJECT_NAME:-zhixing_support}
+services:
+  backend:
+    environment:
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN to https://your-support-host}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+  worker:
+    environment:
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN to https://your-support-host}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+  web:
+    # Bind on all interfaces only when an outer firewall / reverse proxy protects the host.
+    # Prefer leaving 127.0.0.1 bind and putting nginx/Caddy with TLS on the same host.
+    ports:
+      - ${WEB_BIND:-127.0.0.1}:${WEB_PORT:-18080}:80

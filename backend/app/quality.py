@@ -26,10 +26,12 @@ def classify_error(exc):
     return kind,ERRORS[kind]
 
 def add_gap(db,message,reason):
+    from .privacy import redact_text
     gap=db.scalar(select(KnowledgeGap).where(KnowledgeGap.message_id==message.id))
     if gap:return gap
     conv=db.get(Conversation,message.conversation_id);question=db.get(Message,message.reply_to) if message.reply_to else None
-    gap=KnowledgeGap(tenant_id=conv.tenant_id,message_id=message.id,question=question.content if question else '待人工核实问题',reason=reason)
+    raw=question.content if question else '待人工核实问题'
+    gap=KnowledgeGap(tenant_id=conv.tenant_id,message_id=message.id,question=redact_text(raw),reason=reason)
     db.add(gap);db.flush();return gap
 
 class FeedbackInput(BaseModel):
@@ -164,8 +166,10 @@ class ReviewInput(BaseModel):
 
 @router.put('/admin/quality/evaluations/{eid}/cases/{cid}')
 def review(eid:str,cid:str,data:ReviewInput,user:Admin=Depends(require('settings.write')),db:Session=Depends(get_db)):
+    from .privacy import redact_text
     row=db.scalar(select(Evaluation).where(Evaluation.id==eid,Evaluation.tenant_id==user.tenant_id).with_for_update().execution_options(populate_existing=True))
     if not row or not any(c['id']==cid for c in row.cases):raise HTTPException(404,'评测样本不存在')
-    row.cases=[{**c,**data.model_dump(),'reviewer':user.name,'reviewed_at':now().isoformat()} if c['id']==cid else c for c in row.cases]
+    payload={**data.model_dump(),'answer':redact_text(data.answer),'note':redact_text(data.note),'reviewer':user.name,'reviewed_at':now().isoformat()}
+    row.cases=[{**c,**payload} if c['id']==cid else c for c in row.cases]
     from .admin import record
     record(db,user,'人工验收回答样本',eid+':'+cid);db.commit();return eval_data(row)

@@ -58,7 +58,10 @@ export function Chat() {
   async function create() {
     const c = await api<Credential>("/widget/sessions", {
       method: "POST",
-      body: JSON.stringify({ source_page: embedded ? "官网嵌入" : "官网演示" }),
+      body: JSON.stringify({
+        source_page: embedded ? "官网嵌入" : "官网演示",
+        embed_origin: parentOrigin || location.origin,
+      }),
     });
     persist(c);
     return c;
@@ -381,6 +384,12 @@ export function Chat() {
           </div>
           <h1>您好，今天想了解什么？</h1>
           <p>{config?.welcome || "正在连接企业知识库…"}</p>
+          {config?.privacy_notice && (
+            <div className="chat-notice privacy-notice">
+              <ShieldCheck size={17} />
+              <p>{config.privacy_notice}</p>
+            </div>
+          )}
           {!messages.length && (
             <div className="suggested-list">
               {config?.suggested_questions?.map((q: string) => (

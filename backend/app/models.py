@@ -302,3 +302,51 @@ class StudentInterest(Base):
     target_year:Mapped[int|None]=mapped_column(Integer,nullable=True)
     status:Mapped[str]=mapped_column(String(24),default='exploring')
     notes:Mapped[str]=mapped_column(Text,default='')
+
+
+class OpsHeartbeat(Base):
+    """Last-seen signal for worker / backup / other ops components."""
+    __tablename__ = 'ops_heartbeats'
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    status: Mapped[str] = mapped_column(String(24), default='ok')
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class Alert(Base):
+    """Persistent runtime alerts for the admin ops console."""
+    __tablename__ = 'alerts'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    code: Mapped[str] = mapped_column(String(40), index=True)
+    severity: Mapped[str] = mapped_column(String(16), default='warning')  # info | warning | critical
+    status: Mapped[str] = mapped_column(String(16), default='open', index=True)  # open | acked | resolved
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text, default='')
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ack_by: Mapped[str] = mapped_column(String(100), default='')
+    notify_state: Mapped[str] = mapped_column(String(24), default='pending')  # pending | skipped | queued | sent | failed
+
+
+class PrivacyRequest(Base):
+    """Staff-handled contact withdrawal, deletion or anonymization requests."""
+    __tablename__ = 'privacy_requests'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)  # withdraw_contact | anonymize | delete
+    status: Mapped[str] = mapped_column(String(24), default='open', index=True)  # open | completed | rejected
+    subject_name: Mapped[str] = mapped_column(String(100), default='')
+    contact_hint: Mapped[str] = mapped_column(String(120), default='')  # masked hint only, not full contact
+    conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    lead_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    note: Mapped[str] = mapped_column(Text, default='')
+    resolution: Mapped[str] = mapped_column(Text, default='')
+    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actor_name: Mapped[str] = mapped_column(String(100), default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+

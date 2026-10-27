@@ -9,6 +9,7 @@ from .db import SessionLocal, engine
 from .models import DocumentJob, Document, Chunk, Admin, now
 from .jobs import claim, LEASE
 from .config import settings
+from .monitoring import touch_heartbeat, redact_log
 
 class LostLease(Exception):pass
 
@@ -85,9 +86,19 @@ def main():
     migrate_schema(engine)
     while True:
         try:
+            with SessionLocal() as db:
+                touch_heartbeat(db, 'worker', 'ok', {'pid': 'worker'})
+                db.commit()
             if not run_one():time.sleep(2)
-        except Exception:
+        except Exception as exc:
             # No provider payloads, document content or credentials are logged.
-            print('文档任务队列暂不可用，稍后重连',flush=True);time.sleep(5)
+            print('文档任务队列暂不可用，稍后重连: ' + redact_log(str(exc), 120), flush=True)
+            try:
+                with SessionLocal() as db:
+                    touch_heartbeat(db, 'worker', 'fail', {'error': redact_log(str(exc), 120)})
+                    db.commit()
+            except Exception:
+                pass
+            time.sleep(5)
 
 if __name__=='__main__':main()

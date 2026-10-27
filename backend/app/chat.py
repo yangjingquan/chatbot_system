@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
 from .models import Company, Conversation, Document, Lead, Message, TENANT, now
-from .security import digest, limit, visitor
+from .security import digest, limit, visitor, client_ip, assert_embed_allowed
 from .knowledge import retrieve, retrieval_status, historical_commercial_text
 from .scoring import analyze_messages, WITHDRAW_CONTACT, RULE_VERSION
 from .llm import deepseek_stream
@@ -25,26 +25,46 @@ router = APIRouter(prefix='/widget')
 def event(kind, data):
     return f'event: {kind}\ndata: {json.dumps(data,ensure_ascii=False)}\n\n'
 
+def _catalog_source_stale(db, source, context=None):
+    from .catalog import source_valid
+    from .models import Course, CourseBatch
+    course_id=source.get('course_id')
+    db.scalar(select(Course).where(Course.id==course_id).execution_options(populate_existing=True))
+    db.scalars(select(CourseBatch).where(CourseBatch.course_id==course_id).execution_options(populate_existing=True)).all()
+    return not source_valid(db,source,context)
+
+def _document_source_stale(db, source, context=None):
+    doc=db.scalar(select(Document).where(Document.id==source.get('document_id')).execution_options(populate_existing=True))
+    return (not doc or doc.tenant_id!=TENANT or not document_active(doc) or
+            doc.visibility!='public' or doc.version!=source.get('version') or
+            historical_commercial_text({**source,'knowledge_type':doc.knowledge_type}) or
+            (context is not None and not matches_context(doc,context)))
+
+def source_stale_reason(db, sources, context=None):
+    """Return 'catalog', 'document', or None after re-reading current publish/price state."""
+    for source in sources or []:
+        if source.get('kind')=='catalog':
+            if _catalog_source_stale(db,source,context):
+                return 'catalog'
+        elif _document_source_stale(db,source,context):
+            return 'document'
+    return None
+
+def sources_still_valid(db, sources, context=None):
+    return source_stale_reason(db,sources,context) is None
+
 def public_message_data(db, message, context=None):
     result=message_data(message)
     from .models import AnswerFeedback
     feedback=db.get(AnswerFeedback,message.id) if message.role=='assistant' else None
     result['feedback']=feedback.rating if feedback else None
     if message.role=='assistant' and message.sources:
-        for source in message.sources:
-            if source.get('kind')=='catalog':
-                from .catalog import source_valid
-                if source_valid(db,source,context):continue
-                result.update(content='原回答的课程、班次或价格已变化，请重新提问获取当前有效信息。',sources=[],mode='withdrawn',state='withdrawn')
-                break
-            doc=db.get(Document,source.get('document_id'))
-            if (not doc or doc.tenant_id!=TENANT or not document_active(doc) or
-                doc.visibility!='public' or doc.version!=source.get('version') or
-                historical_commercial_text({**source,'knowledge_type':doc.knowledge_type}) or
-                (context is not None and not matches_context(doc,context))):
-                result.update(content='原回答引用的资料已更新、过期或撤回，请重新提问获取当前有效信息。',
-                              sources=[],mode='withdrawn',state='withdrawn')
-                break
+        reason=source_stale_reason(db,message.sources,context)
+        if reason=='catalog':
+            result.update(content='原回答的课程、班次或价格已变化，请重新提问获取当前有效信息。',sources=[],mode='withdrawn',state='withdrawn')
+        elif reason=='document':
+            result.update(content='原回答引用的资料已更新、过期或撤回，请重新提问获取当前有效信息。',
+                          sources=[],mode='withdrawn',state='withdrawn')
     return result
 
 def update_analysis(db, conv):
@@ -70,27 +90,35 @@ def backfill_analysis(db):
 
 @router.get('/config')
 def config(db: Session = Depends(get_db)):
+    from .privacy import DEFAULT_PRIVACY_NOTICE
     values=db.get(Company,TENANT).config
     return {**{k:values[k] for k in ('company_name','bot_name','welcome','suggested_questions','service_hours','contact_notice')},
+            'privacy_notice':values.get('privacy_notice') or DEFAULT_PRIVACY_NOTICE,
             'mode':'deepseek' if settings().deepseek_api_key else 'extractive',
             'model':settings().deepseek_model, 'retrieval':retrieval_status(),
             'demo_notice':'知行公考为演示机构，课程及价格为虚构设定，考试政策以官方公告为准。'}
 
 class SessionCreate(BaseModel):
     source_page: str = Field('官网',max_length=300)
+    embed_origin: str | None = Field(None,max_length=300)
 
 @router.post('/sessions')
 def new_session(data: SessionCreate, request: Request, db: Session = Depends(get_db)):
-    limit('session:'+(request.client.host if request.client else 'local'),30,60)
+    ip=client_ip(request)
+    cfg=settings()
+    limit('session:'+ip, cfg.public_session_limit, cfg.public_session_window)
+    embed_origin=assert_embed_allowed(db, request, data.embed_origin)
     token=secrets.token_urlsafe(48)
     page=data.source_page
     if page.startswith(('http://','https://')):
         parts=urlsplit(page)
         page=f'{parts.scheme}://{parts.netloc}{parts.path}'[:300]
-    conv=Conversation(token_hash=digest(token),source_page=page)
+    elif page in ('官网','官网演示','官网嵌入') or not page:
+        page=embed_origin
+    conv=Conversation(token_hash=digest(token),source_page=page[:300])
     db.add(conv)
     db.commit()
-    return {'id':conv.id,'token':token}
+    return {'id':conv.id,'token':token,'embed_origin':embed_origin}
 
 @router.get('/sessions/{session_id}')
 def history(session_id: str, request: Request, db: Session = Depends(get_db)):
@@ -109,7 +137,8 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
     # Serialize creation of pending messages across simultaneous HTTP requests.
     conv=db.scalar(select(Conversation).where(Conversation.id==conv.id).with_for_update().execution_options(populate_existing=True))
     if not data.content.strip(): raise HTTPException(422,'请输入问题')
-    limit('chat:'+conv.id,20)
+    limit('chat:'+conv.id, settings().public_chat_limit, settings().public_chat_window)
+    limit('chat-ip:'+client_ip(request), settings().public_chat_limit * 3, settings().public_chat_window)
     existing=db.scalar(select(Message).where(Message.conversation_id==conv.id,Message.client_id==data.client_id))
     if existing:
         answer=db.scalar(select(Message).where(Message.reply_to==existing.id))
@@ -147,7 +176,7 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
         conv.waiting_since=conv.waiting_since or now()
         db.commit()
         return StreamingResponse(iter([event('delta',{'text':'已为您登记人工接待请求。可以继续补充需求，工作人员接管后会在这里回复。'}),event('done',{'status':'waiting','waiting':True})]),media_type='text/event-stream')
-    previous=db.scalars(select(Message).where(Message.conversation_id==conv.id,Message.id!=user_message.id).order_by(Message.created_at.desc()).limit(6)).all()
+    previous=db.scalars(select(Message).where(Message.conversation_id==conv.id,Message.id!=user_message.id).order_by(Message.created_at.desc()).limit(4)).all()
     # Carry the latest explicit exam topic into short follow-up questions.
     topic=''
     if not any(t in data.content for t in ('公安联考','国考','省考','选调','事业','招警','辅警','社区')):
@@ -178,38 +207,75 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
         usage={}
         started=time.monotonic()
         error_type='interrupted'
+        knowledge_context=conv.analysis.get('knowledge_context') or {}
+        stale_messages={
+            'catalog':'回答所依据的课程、班次或价格已变化，请重新提问或转人工核实。',
+            'document':'回答所依据的资料已更新、下架或过期，请重新提问或转人工核实。',
+        }
+        def stop_for_stale():
+            reason=source_stale_reason(db,sources,knowledge_context)
+            if not reason:
+                return None
+            answer.state='cancelled'
+            return stale_messages[reason]
+        def stop_for_human():
+            db.refresh(conv)
+            if conv.status=='bot':
+                return None
+            answer.state='cancelled'
+            return '已切换人工服务，机器人回答已停止。'
         try:
             yield event('meta',{'mode':mode,'sources':sources})
             if mode=='unknown':
                 body='当前已发布资料中没有找到足够依据。请补充目标考试、地区或课程名称；涉及具体报名时间和报考资格，请核对对应年度官方公告，也可以转人工核实。'
                 pieces=[body[i:i+24] for i in range(0,len(body),24)]
                 for piece in pieces:
+                    message=stop_for_human() or stop_for_stale()
+                    if message:
+                        yield event('error',{'message':message})
+                        return
                     text+=piece
                     yield event('delta',{'text':piece})
             elif mode=='extractive':
+                message=stop_for_human() or stop_for_stale()
+                if message:
+                    yield event('error',{'message':message})
+                    return
                 text='当前未配置 DeepSeek，以下为已发布资料摘录：\n\n'
                 yield event('delta',{'text':text})
                 for i,source in enumerate(sources[:2]):
+                    message=stop_for_human() or stop_for_stale()
+                    if message:
+                        yield event('error',{'message':message})
+                        return
                     piece=f'[{i+1}] {source["title"]}\n{source["text"][:650]}\n\n'
                     text+=piece
                     yield event('delta',{'text':piece})
                 end='以上经营资料为演示设定。如需实际报价、开班日期或政策资格确认，请转人工核实。'
+                message=stop_for_human() or stop_for_stale()
+                if message:
+                    yield event('error',{'message':message})
+                    return
                 text+=end
                 yield event('delta',{'text':end})
             else:
-                for index,(kind,piece) in enumerate(deepseek_stream(data.content,sources,[public_message_data(db,m,conv.analysis.get('knowledge_context',{})) for m in reversed(previous)])):
+                history_msgs=[public_message_data(db,m,knowledge_context) for m in reversed(previous)]
+                for index,(kind,piece) in enumerate(deepseek_stream(data.content,sources,history_msgs)):
                     if kind=='usage':
                         usage=piece
                         continue
-                    if index % 8 == 0:
-                        db.refresh(conv)
-                        if conv.status!='bot':
-                            answer.state='cancelled'
-                            yield event('error',{'message':'已切换人工服务，机器人回答已停止。'})
-                            return
+                    # Re-check handoff and cited source versions before every model delta.
+                    message=stop_for_human() or stop_for_stale()
+                    if message:
+                        yield event('error',{'message':message})
+                        return
                     text+=piece
                     yield event('delta',{'text':piece})
                 if not text.strip(): raise ValueError('empty model output')
+            message=stop_for_human() or stop_for_stale()
+            if message:
+                yield event('error',{'message':message})
+                return
             complete=True
             error_type=''
             yield event('done',{'id':answer.id,'status':conv.status})
@@ -245,6 +311,7 @@ def contact(session_id: str, data: ContactInput, request: Request, db: Session =
     db.scalar(select(Company).where(Company.id==conv.tenant_id).with_for_update())
     conv=db.scalar(select(Conversation).where(Conversation.id==conv.id).with_for_update().execution_options(populate_existing=True))
     limit('contact:'+conv.id,6,300)
+    limit('contact-ip:'+client_ip(request),20,300)
     value=data.contact.strip()
     if not re.fullmatch(r'(1[3-9]\d{9}|[^\s@]+@[^\s@]+\.[^\s@]+)',value):
         raise HTTPException(422,'请输入有效的中国大陆手机号或邮箱')

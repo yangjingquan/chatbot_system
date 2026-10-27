@@ -8,7 +8,7 @@ from .db import Base, engine, SessionLocal
 from .seed import seed
 from .knowledge import warm_embeddings, retrieval_status
 from .encryption import migrate_contacts
-from . import admin, chat, staff, documents, catalog, students, reception, quality, jobs
+from . import admin, chat, staff, documents, catalog, students, reception, quality, jobs, privacy_admin, ops_admin
 from .migrations import migrate_schema
 from .config import settings
 
@@ -29,6 +29,10 @@ async def lifespan(app):
     yield
 
 app=FastAPI(title='知行客服 API',version='0.4.0',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json',redoc_url=None)
+hosts=[h.strip() for h in settings().allowed_hosts.split(',') if h.strip()]
+if hosts:
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 app.include_router(admin.router,prefix='/api')
 app.include_router(chat.router,prefix='/api')
 app.include_router(staff.router,prefix='/api')
@@ -38,6 +42,8 @@ app.include_router(students.router,prefix='/api')
 app.include_router(reception.router,prefix='/api')
 app.include_router(quality.router,prefix='/api')
 app.include_router(jobs.router,prefix='/api')
+app.include_router(privacy_admin.router,prefix='/api')
+app.include_router(ops_admin.router,prefix='/api')
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError):
@@ -55,8 +61,53 @@ async def safety_headers(request: Request, call_next):
     response.headers['Cache-Control']='no-store'
     return response
 
+@app.middleware('http')
+async def record_latency(request: Request, call_next):
+    import time as _time
+    started = _time.perf_counter()
+    response = await call_next(request)
+    try:
+        from .monitoring import record_request_latency
+        # Skip static noise; still count API work including /api/health.
+        if request.url.path.startswith('/api'):
+            record_request_latency((_time.perf_counter() - started) * 1000)
+    except Exception:
+        pass
+    return response
+
 @app.get('/api/health')
 def health():
-    with engine.connect() as conn:
-        conn.execute(text('SELECT 1'))
-    return {'status':'ok','version':'0.4.0','retrieval':retrieval_status()}
+    """Public liveness/readiness. Avoids leaking secrets; richer detail is under /admin/ops/status."""
+    db_ok = True
+    try:
+        with engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+    except Exception:
+        db_ok = False
+    redis_status = 'skipped'
+    try:
+        from .monitoring import check_redis
+        redis_status = check_redis().get('status', 'skipped')
+    except Exception:
+        redis_status = 'fail'
+    worker_status = 'unknown'
+    try:
+        from .db import SessionLocal
+        from .monitoring import check_worker
+        with SessionLocal() as db:
+            worker_status = check_worker(db).get('status', 'unknown')
+    except Exception:
+        worker_status = 'fail'
+    overall = 'ok' if db_ok and redis_status != 'fail' else 'fail'
+    if overall == 'ok' and worker_status == 'fail':
+        overall = 'degraded'
+    return {
+        'status': overall,
+        'version': '0.4.0',
+        'retrieval': retrieval_status(),
+        'checks': {
+            'database': 'ok' if db_ok else 'fail',
+            'redis': redis_status,
+            'worker': worker_status,
+        },
+    }

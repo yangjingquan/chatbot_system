@@ -29,13 +29,31 @@ export function Configuration({
     toast = useToast();
   const [form, setForm] = useState<any>(null),
     [questions, setQuestions] = useState(""),
+    [embedOrigins, setEmbedOrigins] = useState(""),
+    [retention, setRetention] = useState<any>(null),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     if (r.data) {
       setForm(r.data);
       setQuestions(r.data.suggested_questions.join("\n"));
+      setEmbedOrigins((r.data.allowed_embed_origins || []).join("\n"));
     }
   }, [r.data]);
+  useEffect(() => {
+    if (robot) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api("/admin/privacy/retention");
+        if (!cancelled) setRetention(data);
+      } catch {
+        if (!cancelled) setRetention(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [robot, version]);
   if (r.loading) return <Loading />;
   if (r.error) return <ErrorBox text={r.error} retry={r.reload} />;
   if (!form) return <Loading />;
@@ -47,7 +65,12 @@ export function Configuration({
         ? {
             bot_name: form.bot_name,
             welcome: form.welcome,
+            privacy_notice: form.privacy_notice,
             suggested_questions: questions
+              .split("\n")
+              .map((q) => q.trim())
+              .filter(Boolean),
+            allowed_embed_origins: embedOrigins
               .split("\n")
               .map((q) => q.trim())
               .filter(Boolean),
@@ -61,6 +84,17 @@ export function Configuration({
         method: "PATCH",
         body: JSON.stringify(payload),
       });
+      if (!robot && retention) {
+        await api("/admin/privacy/retention", {
+          method: "PATCH",
+          body: JSON.stringify({
+            retention_conversation_days: Number(retention.retention_conversation_days) || 0,
+            retention_lead_days: Number(retention.retention_lead_days) || 0,
+            retention_audit_days: Number(retention.retention_audit_days) || 0,
+            retention_backup_days: Number(retention.retention_backup_days) || 0,
+          }),
+        });
+      }
       onChange();
       toast("配置已保存，新打开的客服窗口会使用新配置");
     } catch (e: any) {
@@ -122,6 +156,21 @@ export function Configuration({
                 />
               </label>
               <label>
+                模型隐私提示
+                <textarea
+                  rows={4}
+                  value={form.privacy_notice || ""}
+                  onChange={(e) =>
+                    setForm({ ...form, privacy_notice: e.target.value })
+                  }
+                  maxLength={1000}
+                />
+                <small>
+                  展示在访客聊天窗口。默认文案需机构按实际数据处理与 DeepSeek
+                  服务条款确认后再对外使用。
+                </small>
+              </label>
+              <label>
                 推荐问题
                 <textarea
                   rows={6}
@@ -176,6 +225,39 @@ export function Configuration({
                   更改企业名称不会自动重写知识库中的机构资料。正式使用前，请逐份替换并审核演示内容。
                 </p>
               </div>
+              {retention && (
+                <>
+                  <h3 style={{ marginTop: 16 }}>数据留存（天）</h3>
+                  <p className="muted" style={{ marginBottom: 8 }}>
+                    0 表示不自动清理。备份介质上的副本需按备份留存天数另行销毁。详见
+                    docs/备份恢复与密钥轮换.md。RPO/RTO 须机构确认，系统不预设正式承诺。
+                  </p>
+                  {(
+                    [
+                      ["retention_conversation_days", "咨询会话"],
+                      ["retention_lead_days", "线索联系方式"],
+                      ["retention_audit_days", "审计详情"],
+                      ["retention_backup_days", "备份文件建议"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key}>
+                      {label}
+                      <input
+                        type="number"
+                        min={0}
+                        max={3650}
+                        value={retention[key]}
+                        onChange={(e) =>
+                          setRetention({
+                            ...retention,
+                            [key]: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </>
+              )}
             </>
           )}
         </section>
@@ -244,8 +326,21 @@ export function Configuration({
               </div>
               <p>
                 将以下代码加入企业网页，在页面右下角打开学习顾问。当前服务仅绑定本机，适用于本地预览；正式官网需先部署
-                HTTPS 并配置允许嵌入的来源。
+                HTTPS 并配置允许嵌入的来源。部署步骤见仓库 docs/对外部署与访问控制.md。
               </p>
+              <label>
+                允许嵌入域名（每行一个 Origin）
+                <textarea
+                  rows={4}
+                  value={embedOrigins}
+                  onChange={(e) => setEmbedOrigins(e.target.value)}
+                  placeholder={"https://www.example.com\nhttps://example.com"}
+                />
+                <small>
+                  须含协议与主机名，如 https://www.example.com。本站
+                  PUBLIC_ORIGIN 始终可用。未在名单中的网站创建会话会被拒绝并记入操作记录。
+                </small>
+              </label>
               <pre className="code-block">{embed}</pre>
               <div className="actions">
                 <a

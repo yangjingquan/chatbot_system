@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
 from .models import Admin, AdminSession, Audit, Company, Conversation, Document, Chunk, Lead, FollowUp, Message, TENANT, now
-from .security import admin_user, check_origin, digest, passwords, limit
+from .security import admin_user, check_origin, digest, passwords, limit, client_ip, record_security_event, validate_embed_origin_list
 from .knowledge import ingest_document, retrieve, parse_file, retrieval_status
 from .permissions import require, check_permission, user_data, scoped_object, scope_leads, scope_conversations, has_permission
 from .querying import BusinessFilters, Paging, lead_query, conversation_query, paginate, boundaries
@@ -34,10 +34,12 @@ def lead_data(l):
 
 def conversation_data(db, c, full=False, user=None):
     from .reception import unread
+    from .privacy import redact_text
     messages = db.scalars(select(Message).where(Message.conversation_id == c.id).order_by(Message.created_at, Message.id)).all()
+    preview=redact_text(messages[-1].content)[:120] if messages else ''
     result = {'id':c.id, 'visitor_name':c.visitor_name, 'source_page':c.source_page, 'status':c.status,
               'analysis':c.analysis, 'assigned_to_id':c.assigned_to_id, 'is_demo':c.is_demo, 'created_at':c.created_at.isoformat(), 'updated_at':c.updated_at.isoformat(),
-              'last_message':messages[-1].content[:120] if messages else '', 'message_count':len(messages)}
+              'last_message':preview, 'message_count':len(messages)}
     result['unread_count']=unread(db,c,user)
     result['waiting_since']=c.waiting_since.isoformat() if c.waiting_since else None
     assignee=db.get(Admin,c.assigned_to_id) if c.assigned_to_id else None
@@ -55,9 +57,17 @@ class Login(BaseModel):
 @router.post('/auth/login')
 def login(data: Login, request: Request, response: Response, db: Session = Depends(get_db)):
     import secrets
-    check_origin(request)
-    limit('login:' + (request.client.host if request.client else 'local'), 10, 300)
-    user = db.scalar(select(Admin).where(Admin.email == data.email.strip().lower(), Admin.tenant_id == TENANT))
+    ip = client_ip(request)
+    email = data.email.strip().lower()
+    try:
+        check_origin(request)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            record_security_event(db, '拒绝异常来源登录', target=email[:80], details=f'ip={ip}; origin={request.headers.get("origin","")}', actor='匿名')
+            db.commit()
+        raise
+    limit('login:' + ip, 10, 300)
+    user = db.scalar(select(Admin).where(Admin.email == email, Admin.tenant_id == TENANT))
     valid = False
     if user and user.is_active:
         try:
@@ -65,6 +75,8 @@ def login(data: Login, request: Request, response: Response, db: Session = Depen
         except Exception:
             pass
     if not valid:
+        record_security_event(db, '登录失败', target=email[:80], details=f'ip={ip}', actor='匿名')
+        db.commit()
         raise HTTPException(401, '邮箱或密码不正确')
     token = secrets.token_urlsafe(48)
     db.add(AdminSession(token_hash=digest(token), admin_id=user.id))
@@ -86,8 +98,12 @@ def logout(request: Request, response: Response, user: Admin = Depends(admin_use
 
 @router.get('/admin/settings')
 def get_settings(user: Admin = Depends(require('settings.read')), db: Session = Depends(get_db)):
+    from .privacy import DEFAULT_PRIVACY_NOTICE
     config = db.get(Company,user.tenant_id).config
-    return {**{k:v for k,v in config.items() if not k.startswith('_') and k != 'knowledge_seeded'},
+    public={k:v for k,v in config.items() if not k.startswith('_') and k != 'knowledge_seeded'}
+    if not public.get('privacy_notice'):
+        public['privacy_notice']=DEFAULT_PRIVACY_NOTICE
+    return {**public,
             'model_configured': bool(settings().deepseek_api_key), 'model':settings().deepseek_model,
             'provider':'DeepSeek', 'retrieval':retrieval_status(), 'demo_notice':'机构、课程及种子会话均为演示资料'}
 
@@ -96,14 +112,18 @@ class ConfigPatch(BaseModel):
     bot_name: str | None = Field(None,min_length=1,max_length=80)
     description: str | None = Field(None,max_length=500)
     welcome: str | None = Field(None,min_length=1,max_length=1000)
+    privacy_notice: str | None = Field(None,min_length=1,max_length=1000)
     service_hours: str | None = Field(None,max_length=100)
     suggested_questions: list[str] | None = Field(None,max_length=6)
+    allowed_embed_origins: list[str] | None = Field(None,max_length=30)
 
 @router.patch('/admin/settings')
 def update_settings(data: ConfigPatch, user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
     values = data.model_dump(exclude_none=True)
     if any(len(q) > 150 for q in values.get('suggested_questions',[])):
         raise HTTPException(422,'推荐问题不能超过 150 字')
+    if 'allowed_embed_origins' in values:
+        values['allowed_embed_origins'] = validate_embed_origin_list(values['allowed_embed_origins'])
     company = db.get(Company,user.tenant_id)
     company.config = {**company.config, **values}
     record(db,user,'更新企业或机器人设置')
@@ -271,7 +291,8 @@ def overview(filters:BusinessFilters=Depends(),user:Admin=Depends(require('analy
     for i in range(6,-1,-1):
         day = business_date(now() - timedelta(days=i))
         trend.append({'date':day.isoformat(),'conversations':sum(business_date(c.created_at)==day for c in cs),'leads':sum(business_date(l.created_at)==day for l in ls)})
-    gaps = [{'question':m.content[:160],'created_at':m.created_at.isoformat()} for m in messages if m.role=='user' and any(a.reply_to==m.id and a.mode=='unknown' for a in messages)]
+    from .privacy import redact_text
+    gaps = [{'question':redact_text(m.content)[:160],'created_at':m.created_at.isoformat()} for m in messages if m.role=='user' and any(a.reply_to==m.id and a.mode=='unknown' for a in messages)]
     from .document_service import document_active
     from .students import todo_query,student_query
     from .querying import count

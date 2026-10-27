@@ -24,6 +24,7 @@ import {
   ChevronRight,
   ShieldCheck,
   RefreshCw,
+  Activity,
 } from "lucide-react";
 import { api, useResource } from "./api";
 import { ErrorBox, Loading } from "./ui";
@@ -40,6 +41,7 @@ import { Todos } from "./Todos";
 import { ReceptionStatus, Trials } from "./Reception";
 import { Quality } from "./Quality";
 import { DocumentJobs } from "./DocumentJobs";
+import { Monitoring } from "./Monitoring";
 
 const navigation = [
   ["/", "工作台", LayoutDashboard, "analytics.read"],
@@ -55,6 +57,7 @@ const navigation = [
   ["/staff", "员工与权限", ShieldCheck, "staff.manage"],
   ["/robot", "机器人配置", Bot, "settings.write"],
   ["/quality", "质量与用量", ChartNoAxesCombined, "settings.write"],
+  ["/ops", "运行监控", Activity, "settings.read"],
   ["/settings", "企业设置", Settings, "settings.write"],
 ] as const;
 
@@ -398,6 +401,13 @@ export function App() {
                 element={guard(
                   "settings.write",
                   <Configuration robot version={version} onChange={refresh} />,
+                )}
+              />
+              <Route
+                path="/ops"
+                element={guard(
+                  "settings.read",
+                  <Monitoring version={version} />,
                 )}
               />
               <Route

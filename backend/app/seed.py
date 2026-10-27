@@ -8,6 +8,7 @@ from .models import Company, Admin, Document, Conversation, Message, Lead, Follo
 from .security import passwords, digest
 from .knowledge import ingest_document
 from .scoring import analyze_intent
+from .privacy import DEFAULT_PRIVACY_NOTICE
 
 DEFAULT_CONFIG = {
     'company_name': '知行公考', 'bot_name': '知行学习顾问',
@@ -16,7 +17,12 @@ DEFAULT_CONFIG = {
     'service_hours': '每日 09:00–21:00',
     'suggested_questions': ['公安联考基础班多少钱？', '国考零基础怎么学习？', '如何预约试听？', '辅警和社会招警有什么区别？'],
     'contact_notice': '我同意机构使用此联系方式，就本次课程咨询与我联系。联系方式尚待核验，不用于其他营销。',
+    'privacy_notice': DEFAULT_PRIVACY_NOTICE,
     'allowed_embed_origins': ['http://localhost:18080', 'http://127.0.0.1:18080'],
+    'retention_conversation_days': 365,
+    'retention_lead_days': 730,
+    'retention_audit_days': 1095,
+    'retention_backup_days': 90,
     'knowledge_seeded': False,
 }
 
@@ -25,6 +31,10 @@ def seed(db):
     if not company:
         company = Company(id=TENANT, config=DEFAULT_CONFIG.copy())
         db.add(company)
+    else:
+        missing={k:v for k,v in DEFAULT_CONFIG.items() if k not in company.config}
+        if missing:
+            company.config={**company.config,**missing}
     if not db.scalar(select(Admin).where(Admin.tenant_id == TENANT)):
         if len(settings().admin_password) < 16 or len(settings().session_secret) < 32:
             raise RuntimeError('请先运行 scripts/bootstrap.py 生成安全的本地密码与密钥')
