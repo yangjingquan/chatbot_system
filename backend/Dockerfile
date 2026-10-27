@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-chi-sim \
     tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .

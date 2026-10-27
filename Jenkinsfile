@@ -15,7 +15,10 @@ pipeline {
     DEPLOY_DIR = '/opt/chatbot'
     PROJECT    = 'chatbot'
     // 在宿主机上执行 compose 的一次性容器（复用宿主机 docker CLI 和 compose 插件）
-    RUNNER = 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker:ro -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro -e DOCKER_BUILDKIT=1 -e BUILDX_NO_DEFAULT_ATTESTATIONS=1 -e COMPOSE_PROJECT_NAME=chatbot --env-file /opt/chatbot/.env -v /opt/chatbot:/opt/chatbot -w /opt/chatbot/app python:3.12-slim'
+    // 注意：不要在外层 docker run 加 --env-file /opt/chatbot/.env —— Jenkins 容器未挂载该路径，
+    // CLI 会在客户端解析 --env-file 并失败。Sync 已 ln -sfn /opt/chatbot/.env → app/.env，
+    // compose 在 -w /opt/chatbot/app 内会自动读取该 .env。
+    RUNNER = 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker:ro -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro -e DOCKER_BUILDKIT=1 -e BUILDX_NO_DEFAULT_ATTESTATIONS=1 -e COMPOSE_PROJECT_NAME=chatbot -v /opt/chatbot:/opt/chatbot -w /opt/chatbot/app python:3.12-slim'
   }
   stages {
     stage('Validate') {

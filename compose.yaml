@@ -41,6 +41,7 @@ services:
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
       EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+      HF_ENDPOINT: ${HF_ENDPOINT:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       KNOWLEDGE_DIR: /knowledge_base
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:18080}
