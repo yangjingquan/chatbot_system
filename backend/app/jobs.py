@@ -14,7 +14,7 @@ from .querying import Paging, paginate
 from .knowledge import MAX_FILE_BYTES, MAX_FILE_MB, ALLOWED_SUFFIXES
 
 router=APIRouter(prefix='/admin/document-jobs')
-LEASE=timedelta(minutes=10)
+LEASE=timedelta(minutes=20)
 BATCH_LIMIT=30
 
 def classify_error(message: str) -> str:

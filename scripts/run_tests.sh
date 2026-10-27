@@ -22,6 +22,7 @@ CORE_TESTS=(
   tests/test_knowledge_maintenance.py
   tests/test_reception.py
   tests/test_reception_workbench.py
+  tests/test_reception_ws.py
   tests/test_trial_lead_chain.py
   tests/test_schema_migrations.py
 )

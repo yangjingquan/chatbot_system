@@ -199,6 +199,8 @@ def takeover(sid: str, user: Admin = Depends(require('conversations.handle')), d
         db.refresh(conv)
     record(db,user,'接管咨询',sid)
     db.commit()
+    from .reception_events import publish
+    publish(user.tenant_id,'conversation.taken',conversation_id=sid,assigned_to_id=user.id)
     return {'status':'human','assigned_to_id':user.id}
 
 class TextInput(BaseModel):
@@ -219,6 +221,8 @@ def reply(sid: str, data: TextInput, user: Admin = Depends(require('conversation
     db.add(msg)
     conv.updated_at = now()
     db.commit()
+    from .reception_events import publish
+    publish(user.tenant_id,'message.agent',conversation_id=sid,message_id=msg.id)
     return message_data(msg)
 
 class StatusInput(BaseModel):
@@ -237,6 +241,9 @@ def change_status(sid: str, data: StatusInput, user: Admin = Depends(require('co
         conv.handoff_note = ''
     record(db,user,'调整接待状态',sid)
     db.commit()
+    from .reception_events import publish
+    event = 'conversation.closed' if data.status == 'closed' else 'conversation.returned'
+    publish(user.tenant_id,event,conversation_id=sid,status=data.status)
     return {'status':conv.status}
 
 @router.get('/admin/leads')

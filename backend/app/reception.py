@@ -1,7 +1,8 @@
 """Human reception and trial applications. Conversation scope remains the authority."""
+import asyncio
 from datetime import datetime, timedelta
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, or_, and_, update
 from sqlalchemy.orm import Session
@@ -16,7 +17,7 @@ router=APIRouter()
 
 DEFAULT_WAIT_TIMEOUT=300
 DEFAULT_MAX_ACTIVE=5
-DEFAULT_ASSIGN_MODE='manual'
+DEFAULT_ASSIGN_MODE='least_busy'
 
 def reception_config(db, tenant_id):
     company=db.get(Company,tenant_id)
@@ -157,6 +158,8 @@ def claim_next(data:ClaimNextInput|None=None,user:Admin=Depends(require('convers
     from .admin import record
     record(db,user,'接管咨询',target.id)
     db.commit()
+    from .reception_events import publish
+    publish(user.tenant_id,'conversation.taken',conversation_id=target.id,assigned_to_id=user.id)
     return {'status':'human','assigned_to_id':user.id,'conversation_id':target.id}
 
 class ReadInput(BaseModel):
@@ -194,6 +197,8 @@ def transfer(sid:str,data:TransferInput,user:Admin=Depends(require('conversation
     conv.assigned_to_id=target.id;conv.updated_at=now()
     record(db,user,'转交人工会话',sid+':'+target.id+((':'+note[:120]) if note else ''))
     db.commit()
+    from .reception_events import publish
+    publish(user.tenant_id,'conversation.transferred',conversation_id=sid,assigned_to_id=target.id,from_id=user.id)
     return {'status':conv.status,'assigned_to_id':target.id,'handoff_note':conv.handoff_note or ''}
 
 def trial_data(db,t,public=False):
@@ -380,3 +385,76 @@ def patch_trial(tid:str,data:TrialPatch,user:Admin=Depends(require('conversation
     record(db,user,'更新试听申请',t.id+':'+t.status+((':'+reason[:80]) if reason else ''))
     db.commit()
     return trial_detail(t.id,user,db)
+
+
+def _admin_from_websocket(websocket: WebSocket, db: Session):
+    """Authenticate reception WS with the same admin_session cookie as HTTP."""
+    from .security import digest
+    from .models import AdminSession
+    from datetime import datetime, timezone
+    token = websocket.cookies.get('admin_session', '')
+    login = db.get(AdminSession, digest(token)) if token else None
+    if not login:
+        return None
+    created = login.created_at.replace(tzinfo=timezone.utc) if login.created_at.tzinfo is None else login.created_at
+    if (datetime.now(timezone.utc) - created).total_seconds() > 43200:
+        db.delete(login); db.commit()
+        return None
+    user = db.get(Admin, login.admin_id)
+    if not user or not user.is_active or not has_permission(user, 'conversations.read'):
+        return None
+    return user
+
+@router.websocket('/admin/reception/ws')
+async def reception_ws(websocket: WebSocket):
+    """Subscribe to tenant-scoped reception events. Cookie session required.
+
+    Events: queue.waiting, conversation.taken, conversation.transferred,
+    conversation.closed, conversation.returned, message.user, message.agent, ping.
+    In-memory fan-out only (single backend process).
+    """
+    from .db import SessionLocal
+    from .reception_events import subscribe, unsubscribe, encode
+    await websocket.accept()
+    with SessionLocal() as db:
+        user = _admin_from_websocket(websocket, db)
+        if not user:
+            await websocket.close(code=4401)
+            return
+        tenant_id = user.tenant_id
+        admin_id = user.id
+    queue = subscribe(tenant_id)
+    stop = asyncio.Event()
+
+    async def push_events():
+        while not stop.is_set():
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=25)
+            except asyncio.TimeoutError:
+                await websocket.send_text(encode({'type': 'ping'}))
+                continue
+            await websocket.send_text(encode(message))
+
+    async def read_client():
+        while not stop.is_set():
+            raw = await websocket.receive_text()
+            if isinstance(raw, str) and 'ping' in raw.lower():
+                await websocket.send_text(encode({'type': 'pong'}))
+
+    try:
+        await websocket.send_text(encode({'type': 'connected', 'tenant_id': tenant_id, 'admin_id': admin_id}))
+        push_task = asyncio.create_task(push_events())
+        read_task = asyncio.create_task(read_client())
+        done, pending = await asyncio.wait({push_task, read_task}, return_when=asyncio.FIRST_COMPLETED)
+        stop.set()
+        for task in pending:
+            task.cancel()
+        for task in done:
+            exc = task.exception() if not task.cancelled() else None
+            if exc and not isinstance(exc, (WebSocketDisconnect, asyncio.CancelledError)):
+                pass
+    except WebSocketDisconnect:
+        pass
+    finally:
+        stop.set()
+        unsubscribe(tenant_id, queue)

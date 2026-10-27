@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, date, useResource } from "./api";
 import { PageTitle, ErrorBox, Loading, Empty, Badge, useToast } from "./ui";
+import { connectReceptionSocket, pollMs } from "./receptionSocket";
 export const trialLabels: Record<string, string> = {
   pending: "待确认",
   confirmed: "已确认",
@@ -21,6 +22,14 @@ export function ReceptionStatus() {
     [busy, setBusy] = useState(false);
   const counts = useResource<any>("/admin/reception-summary");
   const toast = useToast();
+  const [wsLive, setWsLive] = useState(false);
+  useEffect(() => {
+    const stop = connectReceptionSocket({
+      onStatus: setWsLive,
+      onEvent: () => counts.reload(),
+    });
+    return () => stop();
+  }, []);
   useEffect(() => {
     const beat = () =>
       api("/admin/presence", {
@@ -33,9 +42,9 @@ export function ReceptionStatus() {
     const timer = setInterval(() => {
       beat();
       counts.reload();
-    }, 15000);
+    }, pollMs(wsLive, 60000, 15000));
     return () => clearInterval(timer);
-  }, [status]);
+  }, [status, wsLive]);
   async function claimNext() {
     setBusy(true);
     try {

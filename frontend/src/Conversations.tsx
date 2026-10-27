@@ -22,6 +22,7 @@ import {
   PageTitle,
   useToast,
 } from "./ui";
+import { connectReceptionSocket, pollMs } from "./receptionSocket";
 
 
 function formatWait(seconds?: number | null) {
@@ -143,14 +144,34 @@ export function Conversations({
     (!detail?.assigned_to_id ||
       detail.assigned_to_id === user?.id ||
       user?.role === "admin");
+  const [wsLive, setWsLive] = useState(false);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  useEffect(() => {
+    const stop = connectReceptionSocket({
+      onStatus: setWsLive,
+      onEvent: (ev) => {
+        list.reload();
+        receptionStaff.reload();
+        summary.reload();
+        const sid = selectedRef.current;
+        if (sid && ev.conversation_id && ev.conversation_id === sid) {
+          api("/admin/conversations/" + sid)
+            .then(setDetail)
+            .catch(() => {});
+        }
+      },
+    });
+    return () => stop();
+  }, []);
   useEffect(() => {
     const timer = setInterval(() => {
       list.reload();
       receptionStaff.reload();
       summary.reload();
-    }, 5000);
+    }, pollMs(wsLive, 30000, 5000));
     return () => clearInterval(timer);
-  }, []);
+  }, [wsLive]);
   useEffect(() => {
     const q = params.get("conversation_id");
     if (q) setSelected(q);
@@ -189,12 +210,12 @@ export function Conversations({
         });
     setDetail(null);
     load();
-    const timer = setInterval(load, 2500);
+    const timer = setInterval(load, pollMs(wsLive, 15000, 2500));
     return () => {
       active = false;
       clearInterval(timer);
     };
-  }, [selected, version]);
+  }, [selected, version, wsLive]);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [detail?.messages?.length]);

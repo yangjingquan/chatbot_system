@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
     'retention_lead_days': 730,
     'retention_audit_days': 1095,
     'retention_backup_days': 90,
-    'reception_assign_mode': 'manual',
+    'reception_assign_mode': 'least_busy',
     'reception_max_active': 5,
     'reception_wait_timeout_seconds': 300,
     'canned_replies': [
@@ -43,6 +43,9 @@ def seed(db):
         missing={k:v for k,v in DEFAULT_CONFIG.items() if k not in company.config}
         if missing:
             company.config={**company.config,**missing}
+        # Product default flipped to least_busy; operators may switch back to manual in 机器人配置.
+        if int(company.config.get('reception_defaults_revision') or 1) < 2:
+            company.config={**company.config,'reception_assign_mode':'least_busy','reception_defaults_revision':2}
     if not db.scalar(select(Admin).where(Admin.tenant_id == TENANT)):
         if len(settings().admin_password) < 16 or len(settings().session_secret) < 32:
             raise RuntimeError('请先运行 scripts/bootstrap.py 生成安全的本地密码与密钥')

@@ -1,4 +1,4 @@
-"""Knowledge expiry reminders and owner todos. OCR remains intentionally disabled."""
+"""Knowledge expiry reminders and owner todos. Scanned PDFs use OCR when text extract fails."""
 from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import select, or_

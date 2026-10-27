@@ -365,7 +365,7 @@ export function Knowledge({
             </table>
           </div>
           <p className="footnote">
-            扫描 PDF 的 OCR 尚未启用。过期与内部资料不会进入公开回答。
+            扫描 PDF 已启用 OCR（中英）。过期与内部资料不会进入公开回答。单文件上限 50 MB。
           </p>
         </section>
       ) : null}
@@ -374,7 +374,7 @@ export function Knowledge({
         <span>
           筛选共 <strong>{r.data?.total || 0}</strong> 份资料
         </span>
-        <small>草稿与正式资料独立 · 支持 Markdown、TXT、文本 PDF、DOCX</small>
+        <small>草稿与正式资料独立 · 支持 Markdown、TXT、PDF（含扫描 OCR）、DOCX；单文件上限 50 MB</small>
       </div>
       <div className={"knowledge-layout " + (edit ? "with-editor" : "")}>
         <section className="panel document-panel">

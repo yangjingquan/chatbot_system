@@ -80,7 +80,7 @@ export function Configuration({
               .split("\n")
               .map((q) => q.trim())
               .filter(Boolean),
-            reception_assign_mode: form.reception_assign_mode || "manual",
+            reception_assign_mode: form.reception_assign_mode || "least_busy",
             reception_max_active: Number(form.reception_max_active) || 5,
             reception_wait_timeout_seconds:
               Number(form.reception_wait_timeout_seconds) || 300,
@@ -204,7 +204,7 @@ export function Configuration({
               <label>
                 人工分配规则
                 <select
-                  value={form.reception_assign_mode || "manual"}
+                  value={form.reception_assign_mode || "least_busy"}
                   onChange={(e) =>
                     setForm({
                       ...form,
@@ -212,8 +212,8 @@ export function Configuration({
                     })
                   }
                 >
-                  <option value="manual">手动领取（默认）</option>
-                  <option value="least_busy">优先较少负载的在线客服</option>
+                  <option value="least_busy">最少负载优先（默认）</option>
+                  <option value="manual">手动领取</option>
                 </select>
               </label>
               <label>

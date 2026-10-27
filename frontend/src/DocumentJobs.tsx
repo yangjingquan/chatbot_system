@@ -89,7 +89,7 @@ export function DocumentJobs({ version }: { version: number }) {
     <>
       <PageTitle
         title="文档处理任务"
-        description="支持批量上传：个别文件失败不影响其余文件。文件解析成草稿后仍需审核发布；发布文字索引即时生效，后台继续构建向量索引。扫描 PDF 的 OCR 尚未启用。"
+        description="支持批量上传：个别文件失败不影响其余文件。文件解析成草稿后仍需审核发布；发布文字索引即时生效，后台继续构建向量索引。扫描 PDF 已启用 OCR（中英），单文件上限 50 MB。"
       />
       <section className="panel">
         <div className="list-toolbar">
@@ -319,8 +319,8 @@ export function DocumentJobs({ version }: { version: number }) {
         </div>
       </section>
       <p className="footnote">
-        单文件上限 15
-        MB；OCR 未启用。任务保存在数据库，工作进程意外退出后租约过期会重新领取，最多尝试
+        单文件上限 50
+        MB；扫描 PDF 已启用 OCR。任务保存在数据库，工作进程意外退出后租约过期会重新领取，最多尝试
         3 次。校验失败（类型/大小）须重新上传，不能批量重试。
       </p>
     </>

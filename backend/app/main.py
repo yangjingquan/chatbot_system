@@ -53,7 +53,10 @@ async def validation_error(request: Request, exc: RequestValidationError):
 @app.middleware('http')
 async def safety_headers(request: Request, call_next):
     length=request.headers.get('content-length')
-    if length and (not length.isdigit() or int(length)>6*1024*1024):
+    # Allow knowledge uploads up to ~50 MB (+ multipart overhead); keep other writes smaller.
+    uploadish = request.url.path.startswith('/api/admin/document-jobs') or request.url.path.startswith('/api/admin/documents')
+    limit = 55*1024*1024 if uploadish else 6*1024*1024
+    if length and (not length.isdigit() or int(length)>limit):
         return JSONResponse(status_code=413,content={'detail':'请求内容超过大小限制'})
     response=await call_next(request)
     response.headers['X-Content-Type-Options']='nosniff'

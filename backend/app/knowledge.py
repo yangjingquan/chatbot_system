@@ -88,11 +88,38 @@ def retrieve(db,query:str,public_only:bool=True,tenant_id:str=TENANT,limit:int=4
     if courses and docs:return courses[:min(2,limit)]+docs[:max(0,limit-min(2,len(courses)))]
     return (courses+docs)[:limit]
 
-# Text/PDF/DOCX with tables often exceed 5 MB; OCR is still intentionally off, so
-# scanned image-only PDFs continue to fail the extractable-text check below.
-MAX_FILE_BYTES = 15 * 1024 * 1024
+# Text/PDF/DOCX with tables often exceed 15 MB; scanned PDFs use OCR (tesseract).
+MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_FILE_MB = MAX_FILE_BYTES // (1024 * 1024)
 ALLOWED_SUFFIXES = {'.md', '.txt', '.pdf', '.docx'}
+OCR_ENABLED = True
+OCR_MAX_PAGES = 50
+OCR_DPI = 200
+OCR_LANG = 'chi_sim+eng'
+
+
+def ocr_pdf_bytes(content: bytes, *, max_pages: int = OCR_MAX_PAGES, dpi: int = OCR_DPI, lang: str = OCR_LANG) -> str:
+    """Rasterize PDF pages and run Tesseract. Overridable in tests via monkeypatch."""
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except Exception as exc:
+        raise HTTPException(503, f'OCR 依赖未就绪（pdf2image/pytesseract）：{exc}') from exc
+    try:
+        images = convert_from_bytes(content, dpi=dpi, first_page=1, last_page=max_pages)
+    except Exception as exc:
+        raise HTTPException(422, f'扫描 PDF 转图像失败，无法 OCR：{exc}') from exc
+    if not images:
+        raise HTTPException(422, '扫描 PDF 无可识别页面，OCR 未提取到文字')
+    parts = []
+    for i, image in enumerate(images):
+        try:
+            page_text = pytesseract.image_to_string(image, lang=lang) or ''
+        except Exception as exc:
+            raise HTTPException(422, f'第 {i + 1} 页 OCR 失败：{exc}') from exc
+        parts.append(f'第 {i + 1} 页\n{page_text}')
+    return '\n\n'.join(parts)
+
 
 def parse_file(filename: str, content: bytes) -> str:
     suffix = Path(filename).suffix.lower()
@@ -108,11 +135,15 @@ def parse_file(filename: str, content: bytes) -> str:
                 raise ValueError('encrypted or too many pages')
             text = '\n\n'.join(f'第 {i + 1} 页\n{p.extract_text() or ""}' for i, p in enumerate(reader.pages))
             if len(re.sub(r'第 \d+ 页|\s', '', text)) < 20:
-                raise HTTPException(422, '未提取到足够文字，可能是扫描 PDF；本版尚未启用 OCR，请上传可复制文字的 PDF、Markdown、TXT 或 DOCX')
+                if not OCR_ENABLED:
+                    raise HTTPException(422, '未提取到足够文字，可能是扫描 PDF；OCR 已关闭，请上传可复制文字的 PDF、Markdown、TXT 或 DOCX')
+                text = ocr_pdf_bytes(content)
+                if len(re.sub(r'第 \d+ 页|\s', '', text)) < 20:
+                    raise HTTPException(422, 'OCR 未识别到足够文字，请检查扫描清晰度或改传可复制文字的 PDF / Markdown / TXT / DOCX')
         elif suffix == '.docx':
             from docx import Document as Word
             archive = zipfile.ZipFile(io.BytesIO(content))
-            if len(archive.infolist()) > 1000 or sum(i.file_size for i in archive.infolist()) > 40 * 1024 * 1024:
+            if len(archive.infolist()) > 1000 or sum(i.file_size for i in archive.infolist()) > 80 * 1024 * 1024:
                 raise ValueError('document expands beyond limit')
             document = Word(io.BytesIO(content))
             text = '\n'.join(p.text for p in document.paragraphs)

@@ -6,12 +6,12 @@ from app.knowledge import MAX_FILE_BYTES, MAX_FILE_MB, parse_file
 from fastapi import HTTPException
 import pytest
 
-def test_file_limit_is_fifteen_mb_and_rejects_oversize():
-    assert MAX_FILE_MB == 15
+def test_file_limit_is_fifty_mb_and_rejects_oversize():
+    assert MAX_FILE_MB == 50
     with pytest.raises(HTTPException) as err:
         parse_file('big.txt', b'x' * (MAX_FILE_BYTES + 1))
     assert err.value.status_code == 413
-    assert '15' in err.value.detail
+    assert '50' in err.value.detail
 
 def test_batch_upload_partial_failure_keeps_other_files(admin):
     from app.worker import run_one
@@ -141,9 +141,28 @@ def test_knowledge_expiry_todos_for_owner(admin):
     again = admin.get('/api/admin/knowledge-todos?status=open&page_size=50').json()
     assert (soon['id'], 'expiring_soon') not in {(t['document_id'], t['kind']) for t in again['items']}
 
-def test_ocr_still_disabled_message():
+def test_ocr_used_when_pdf_has_no_extractable_text(monkeypatch):
     from pypdf import PdfWriter
     import io
+    import app.knowledge as knowledge
+    calls = {}
+    def fake_ocr(content, **kwargs):
+        calls['ok'] = True
+        return '第 1 页\n这是扫描件识别出的公考课程说明文字足够长，用于测试OCR成功路径'
+    monkeypatch.setattr(knowledge, 'ocr_pdf_bytes', fake_ocr)
+    buffer = io.BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    writer.write(buffer)
+    text = parse_file('scan.pdf', buffer.getvalue())
+    assert calls.get('ok')
+    assert '扫描件识别' in text
+
+def test_ocr_failure_message_when_mock_returns_empty(monkeypatch):
+    from pypdf import PdfWriter
+    import io
+    import app.knowledge as knowledge
+    monkeypatch.setattr(knowledge, 'ocr_pdf_bytes', lambda content, **kwargs: '第 1 页\n')
     buffer = io.BytesIO()
     writer = PdfWriter()
     writer.add_blank_page(width=200, height=200)

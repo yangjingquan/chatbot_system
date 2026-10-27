@@ -169,12 +169,22 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
         raise HTTPException(409,'问题已经提交，请刷新会话')
     update_analysis(db,conv)
     if conv.status in ('human','waiting'):
+        status=conv.status
+        tenant_id=conv.tenant_id
+        sid=conv.id
+        mid=user_message.id
         db.commit()
-        return StreamingResponse(iter([event('done',{'status':conv.status,'waiting':True})]),media_type='text/event-stream')
+        from .reception_events import publish
+        publish(tenant_id,'message.user',conversation_id=sid,message_id=mid,status=status)
+        return StreamingResponse(iter([event('done',{'status':status,'waiting':True})]),media_type='text/event-stream')
     if re.search(r'转人工|人工客服|真人客服|找人工',data.content):
         conv.status='waiting'
         conv.waiting_since=conv.waiting_since or now()
+        tenant_id=conv.tenant_id
+        sid=conv.id
         db.commit()
+        from .reception_events import publish
+        publish(tenant_id,'queue.waiting',conversation_id=sid)
         return StreamingResponse(iter([event('delta',{'text':'已为您登记人工接待请求。可以继续补充需求，工作人员接管后会在这里回复。'}),event('done',{'status':'waiting','waiting':True})]),media_type='text/event-stream')
     previous=db.scalars(select(Message).where(Message.conversation_id==conv.id,Message.id!=user_message.id).order_by(Message.created_at.desc()).limit(4)).all()
     # Carry the latest explicit exam topic into short follow-up questions.
@@ -359,5 +369,11 @@ def handoff(session_id: str, request: Request, db: Session = Depends(get_db)):
     if conv.status!='human':
         conv.status='waiting'
         conv.waiting_since=conv.waiting_since or now()
+    tenant_id=conv.tenant_id
+    sid=conv.id
+    status=conv.status
     db.commit()
-    return {'status':conv.status}
+    if status=='waiting':
+        from .reception_events import publish
+        publish(tenant_id,'queue.waiting',conversation_id=sid)
+    return {'status':status}
