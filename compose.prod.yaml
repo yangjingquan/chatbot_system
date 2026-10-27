@@ -22,8 +22,5 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
-  web:
-    # Bind on all interfaces only when an outer firewall / reverse proxy protects the host.
-    # Prefer leaving 127.0.0.1 bind and putting nginx/Caddy with TLS on the same host.
-    ports:
-      - ${WEB_BIND:-127.0.0.1}:${WEB_PORT:-18080}:80
+  # web ports live only in compose.yaml (${WEB_BIND}:${WEB_PORT}:80).
+  # Compose merges ports by appending; a second ports list here would bind twice and fail.
