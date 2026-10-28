@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useRef, useState } from "react";
 import {
   Search,
@@ -223,7 +224,7 @@ export function Leads({
                           <span>
                             <strong>
                               {l.name}
-                              {l.is_demo && <Badge tone="muted">演示</Badge>}
+                              {l.is_demo && <Badge tone="muted">示例</Badge>}
                             </strong>
                             <small>
                               {!l.contact_allowed && (
@@ -311,9 +312,7 @@ export function Leads({
             <div className="panel-heading">
               <div>
                 <h2>{detail.name}</h2>
-                <small>
-                  {detail.is_demo ? "合成演示记录" : "网站咨询线索"}
-                </small>
+                <small>{detail.is_demo ? "示例记录" : "网站咨询线索"}</small>
               </div>
               <button
                 className="icon-button"
@@ -346,39 +345,39 @@ export function Leads({
             <div className="form-row">
               <label>
                 意向等级
-                <select
+                <Select
                   value={detail.level}
-                  onChange={(e) =>
-                    setDetail({ ...detail, level: e.target.value })
+                  onValueChange={(value) =>
+                    setDetail({ ...detail, level: value })
                   }
                 >
                   {levels.map((v) => (
                     <option key={v}>{v}</option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 跟进阶段
-                <select
+                <Select
                   value={detail.stage}
-                  onChange={(e) =>
-                    setDetail({ ...detail, stage: e.target.value })
+                  onValueChange={(value) =>
+                    setDetail({ ...detail, stage: value })
                   }
                 >
                   {stages.map((v) => (
                     <option key={v}>{v}</option>
                   ))}
-                </select>
+                </Select>
               </label>
             </div>
             <label>
               负责人
               {can("leads.assign") ? (
-                <select
+                <Select
                   value={detail.owner_id || ""}
                   disabled={staff.loading || Boolean(staff.error)}
-                  onChange={(e) =>
-                    setDetail({ ...detail, owner_id: e.target.value || null })
+                  onValueChange={(value) =>
+                    setDetail({ ...detail, owner_id: value || null })
                   }
                 >
                   <option value="">
@@ -398,7 +397,7 @@ export function Leads({
                       {m.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               ) : (
                 <input readOnly value={detail.owner} />
               )}
@@ -446,9 +445,7 @@ export function Leads({
             )}
             <h3>
               意向证据{" "}
-              <small>
-                规则分数 {detail.score} / 100 · 仅作跟进辅助
-              </small>
+              <small>规则分数 {detail.score} / 100 · 仅作跟进辅助</small>
             </h3>
             {(detail.score_meta?.uncertainty ||
               detail.score_meta?.confidence) && (
@@ -500,7 +497,9 @@ export function Leads({
                   </Link>
                   <small>
                     意向 {date(t.requested_at, true)}
-                    {t.scheduled_at ? ` · 确认 ${date(t.scheduled_at, true)}` : ""}
+                    {t.scheduled_at
+                      ? ` · 确认 ${date(t.scheduled_at, true)}`
+                      : ""}
                     {t.reason ? ` · 原因：${t.reason}` : ""}
                   </small>
                 </article>

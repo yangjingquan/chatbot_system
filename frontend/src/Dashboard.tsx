@@ -23,6 +23,7 @@ import {
   Bar,
 } from "recharts";
 import { date, useResource } from "./api";
+import { messageCopy } from "./displayCopy";
 import { Filters, queryString, useFilterState } from "./lists";
 import { Badge, Empty, ErrorBox, Level, Loading, PageTitle } from "./ui";
 
@@ -288,9 +289,14 @@ export function Dashboard({
                   <div>
                     <strong>
                       {v.visitor_name}
-                      {v.is_demo && <Badge tone="muted">演示</Badge>}
+                      {v.is_demo && <Badge tone="muted">示例</Badge>}
                     </strong>
-                    <p>{v.last_message}</p>
+                    <p>
+                      {messageCopy(
+                        v.last_message || "",
+                        v.is_demo ? "sample" : undefined,
+                      )}
+                    </p>
                   </div>
                   <span className="recent-time">
                     {date(v.updated_at, true)}
@@ -301,7 +307,7 @@ export function Dashboard({
           ) : (
             <Empty
               title="还没有咨询"
-              description="打开官网演示，向右下角的学习顾问提问。"
+              description="打开咨询页面，向右下角的学习顾问提问。"
             >
               <a href="/demo" className="button secondary small">
                 体验官网客服
@@ -438,9 +444,7 @@ export function Analytics({
             {d.reply_latency?.avg_seconds != null
               ? d.reply_latency.avg_seconds
               : "—"}
-            <small>
-              {d.reply_latency?.avg_seconds != null ? "秒" : ""}
-            </small>
+            <small>{d.reply_latency?.avg_seconds != null ? "秒" : ""}</small>
           </strong>
           <p>
             排队到首条客服消息
@@ -547,8 +551,7 @@ export function Analytics({
         </section>
       </div>
       <p className="footnote">
-        统计说明：关闭“包含演示记录”后排除合成数据。有效咨询、留资、试听、成交与回复时长口径见接口
-        metric_definitions；规则评分不等于成交概率，成交需销售如实回填。列表/导出/报表共用同一筛选。
+        统计说明：关闭“包含示例记录”后排除示例数据。各项指标按当前筛选范围统计；规则评分不等于成交概率，成交需如实回填。
       </p>
     </>
   );

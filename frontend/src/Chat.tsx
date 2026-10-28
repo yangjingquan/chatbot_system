@@ -14,6 +14,7 @@ import { api } from "./api";
 import { Badge, ErrorBox } from "./ui";
 import { MessageBubble } from "./Conversations";
 import { WidgetTrial } from "./Reception";
+import { systemMessageCopy, welcomeCopy } from "./displayCopy";
 import {
   consumeEvents,
   restoreSession,
@@ -59,7 +60,7 @@ export function Chat() {
     const c = await api<Credential>("/widget/sessions", {
       method: "POST",
       body: JSON.stringify({
-        source_page: embedded ? "官网嵌入" : "官网演示",
+        source_page: embedded ? "官网嵌入" : "官网",
         embed_origin: parentOrigin || location.origin,
       }),
     });
@@ -228,7 +229,7 @@ export function Chat() {
             );
         }
         if (kind === "error") {
-          setError(item.message);
+          setError(systemMessageCopy(item.message));
           setMessages((old) =>
             old.map((m) =>
               m.id === assistantId
@@ -383,7 +384,7 @@ export function Chat() {
             <GraduationCap size={27} />
           </div>
           <h1>您好，今天想了解什么？</h1>
-          <p>{config?.welcome || "正在连接企业知识库…"}</p>
+          <p>{welcomeCopy(config?.welcome)}</p>
           {config?.privacy_notice && (
             <div className="chat-notice privacy-notice">
               <ShieldCheck size={17} />
@@ -466,7 +467,7 @@ export function Chat() {
                 value={contact}
                 maxLength={160}
                 onChange={(e) => setContact(e.target.value)}
-                placeholder="请使用合成信息测试"
+                placeholder="请输入手机号或邮箱"
               />
             </label>
             <label className="checkbox-line">
@@ -503,7 +504,12 @@ export function Chat() {
       <div className="chat-compose">
         <div className="chat-tools">
           <button
-            disabled={!credential || status === "human" || status === "waiting" || status === "closed"}
+            disabled={
+              !credential ||
+              status === "human" ||
+              status === "waiting" ||
+              status === "closed"
+            }
             title={status === "closed" ? "咨询已结束，请先新建咨询" : undefined}
             onClick={handoff}
           >
@@ -553,7 +559,9 @@ export function Chat() {
             <Send size={18} />
           </button>
         </form>
-        <small>经营资料为演示设定 · 考试政策以官方公告为准</small>
+        <small>
+          课程及价格以机构实际公布的信息为准 · 考试政策以官方公告为准
+        </small>
       </div>
     </div>
   );

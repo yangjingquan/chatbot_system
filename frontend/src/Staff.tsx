@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useState, type FormEvent } from "react";
 import { Plus, Save, ShieldCheck, X } from "lucide-react";
 import { api, useResource } from "./api";
@@ -12,7 +13,7 @@ const roles = {
 };
 const descriptions: Record<string, string> = {
   admin: "全部数据；管理员工、分配线索、导出数据及审核发布知识。",
-  knowledge: "维护知识草稿、提交审核、查看版本和测试检索。",
+  knowledge: "维护知识草稿、提交审核、查看版本和验证检索。",
   support: "查看机构内咨询与线索，接待访客、记录跟进和查看统计。",
   advisor: "仅查看分配给自己的线索、关联咨询和统计，进行接待与跟进。",
 };
@@ -186,16 +187,16 @@ export function Staff({ version }: { version: number }) {
               </label>
               <label>
                 岗位
-                <select
+                <Select
                   value={edit.role}
-                  onChange={(e) => setEdit({ ...edit, role: e.target.value })}
+                  onValueChange={(value) => setEdit({ ...edit, role: value })}
                 >
                   {Object.entries(roles).map(([v, label]) => (
                     <option value={v} key={v}>
                       {label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <p className="footnote">{descriptions[edit.role]}</p>
               {!edit.id && (

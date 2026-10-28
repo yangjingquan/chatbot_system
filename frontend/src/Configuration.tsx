@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { Pager, usePaged } from "./lists";
 import { useEffect, useState } from "react";
 import {
@@ -110,7 +111,8 @@ export function Configuration({
         await api("/admin/privacy/retention", {
           method: "PATCH",
           body: JSON.stringify({
-            retention_conversation_days: Number(retention.retention_conversation_days) || 0,
+            retention_conversation_days:
+              Number(retention.retention_conversation_days) || 0,
             retention_lead_days: Number(retention.retention_lead_days) || 0,
             retention_audit_days: Number(retention.retention_audit_days) || 0,
             retention_backup_days: Number(retention.retention_backup_days) || 0,
@@ -203,18 +205,18 @@ export function Configuration({
               </label>
               <label>
                 人工分配规则
-                <select
+                <Select
                   value={form.reception_assign_mode || "least_busy"}
-                  onChange={(e) =>
+                  onValueChange={(value) =>
                     setForm({
                       ...form,
-                      reception_assign_mode: e.target.value,
+                      reception_assign_mode: value,
                     })
                   }
                 >
                   <option value="least_busy">最少负载优先（默认）</option>
                   <option value="manual">手动领取</option>
-                </select>
+                </Select>
               </label>
               <label>
                 每位客服同时接待上限
@@ -256,7 +258,8 @@ export function Configuration({
                   placeholder={"标题\t正文内容"}
                 />
                 <small>
-                  每行一条，标题与正文用 Tab 分隔；最多 40 条。客服可在咨询页一键填入。
+                  每行一条，标题与正文用 Tab 分隔；最多 40
+                  条。客服可在咨询页一键填入。
                 </small>
               </label>
               <div className="inline-note">
@@ -302,15 +305,17 @@ export function Configuration({
               <div className="inline-note">
                 <BookOpen size={18} />
                 <p>
-                  更改企业名称不会自动重写知识库中的机构资料。正式使用前，请逐份替换并审核演示内容。
+                  更改企业名称不会自动重写知识库中的机构资料，请及时审核并更新相关信息。
                 </p>
               </div>
               {retention && (
                 <>
                   <h3 style={{ marginTop: 16 }}>数据留存（天）</h3>
                   <p className="muted" style={{ marginBottom: 8 }}>
-                    0 表示不自动清理。备份介质上的副本需按备份留存天数另行销毁。详见
-                    docs/备份恢复与密钥轮换.md。RPO/RTO 须机构确认，系统不预设正式承诺。
+                    0
+                    表示不自动清理。备份介质上的副本需按备份留存天数另行销毁。详见
+                    docs/备份恢复与密钥轮换.md。RPO/RTO
+                    须机构确认，系统不预设正式承诺。
                   </p>
                   {(
                     [
@@ -384,13 +389,10 @@ export function Configuration({
           <div className="key-notice">
             <KeyRound size={18} />
             <p>
-              API Key 仅保存在服务器环境变量中，不在此页面展示或存储。修改本地
-              .env 后，重新创建后端容器使配置生效。
+              API Key
+              由管理员在服务端配置，不在此页面展示。需要调整时，请联系系统管理员。
             </p>
           </div>
-          <code className="command">
-            docker compose up -d --force-recreate backend
-          </code>
         </section>
         {robot ? (
           <>
@@ -405,8 +407,8 @@ export function Configuration({
                 </button>
               </div>
               <p>
-                将以下代码加入企业网页，在页面右下角打开学习顾问。当前服务仅绑定本机，适用于本地预览；正式官网需先部署
-                HTTPS 并配置允许嵌入的来源。部署步骤见仓库 docs/对外部署与访问控制.md。
+                将以下代码加入企业网页，即可在页面右下角打开学习顾问。请确保服务地址使用
+                HTTPS，并配置允许嵌入的域名。
               </p>
               <label>
                 允许嵌入域名（每行一个 Origin）
@@ -418,7 +420,8 @@ export function Configuration({
                 />
                 <small>
                   须含协议与主机名，如 https://www.example.com。本站
-                  PUBLIC_ORIGIN 始终可用。未在名单中的网站创建会话会被拒绝并记入操作记录。
+                  PUBLIC_ORIGIN
+                  始终可用。未在名单中的网站创建会话会被拒绝并记入操作记录。
                 </small>
               </label>
               <pre className="code-block">{embed}</pre>

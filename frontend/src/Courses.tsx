@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useRef, useState } from "react";
 import { Plus, Save, X } from "lucide-react";
 import { api } from "./api";
@@ -32,13 +33,32 @@ const saleLabels: Record<string, string> = {
   sold_out: "已满班",
   ended: "已结束",
 };
-const courseSnapshot = (c: any) => JSON.stringify(
-  c && [c.name, c.exam_type, String(c.hours), c.class_type, c.description, c.status],
-);
-const batchSnapshot = (b: any, price: string) => JSON.stringify(
-  b && [b.name, b.mode, b.location, b.schedule, b.starts_at, b.ends_at,
-    b.sale_status, b.price_from, b.price_until, price],
-);
+const courseSnapshot = (c: any) =>
+  JSON.stringify(
+    c && [
+      c.name,
+      c.exam_type,
+      String(c.hours),
+      c.class_type,
+      c.description,
+      c.status,
+    ],
+  );
+const batchSnapshot = (b: any, price: string) =>
+  JSON.stringify(
+    b && [
+      b.name,
+      b.mode,
+      b.location,
+      b.schedule,
+      b.starts_at,
+      b.ends_at,
+      b.sale_status,
+      b.price_from,
+      b.price_until,
+      price,
+    ],
+  );
 export function Courses({ version }: { version: number }) {
   const list = usePaged("/admin/courses", true, version),
     r = list.resource,
@@ -50,24 +70,54 @@ export function Courses({ version }: { version: number }) {
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const write = can("courses.write");
-  const originalCourse = useRef("null"), originalBatch = useRef("null");
+  const originalCourse = useRef("null"),
+    originalBatch = useRef("null");
   const courseDirty = !!edit && courseSnapshot(edit) !== originalCourse.current;
-  const batchDirty = !!batch && batchSnapshot(batch, price) !== originalBatch.current;
+  const batchDirty =
+    !!batch && batchSnapshot(batch, price) !== originalBatch.current;
   function mayDiscard() {
-    return !(courseDirty || batchDirty) || window.confirm("有未保存的课程或班次修改，确定放弃吗？");
+    return (
+      !(courseDirty || batchDirty) ||
+      window.confirm("有未保存的课程或班次修改，确定放弃吗？")
+    );
   }
   useEffect(() => {
     if (!courseDirty && !batchDirty) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
     const guardLink = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      const link = event.target instanceof Element ? event.target.closest("a[href]") as HTMLAnchorElement | null : null;
-      if (!link || link.target === "_blank" || link.origin !== window.location.origin || link.pathname === window.location.pathname) return;
-      if (!mayDiscard()) { event.preventDefault(); event.stopPropagation(); }
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return;
+      const link =
+        event.target instanceof Element
+          ? (event.target.closest("a[href]") as HTMLAnchorElement | null)
+          : null;
+      if (
+        !link ||
+        link.target === "_blank" ||
+        link.origin !== window.location.origin ||
+        link.pathname === window.location.pathname
+      )
+        return;
+      if (!mayDiscard()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
     window.addEventListener("beforeunload", warn);
     document.addEventListener("click", guardLink, true);
-    return () => { window.removeEventListener("beforeunload", warn); document.removeEventListener("click", guardLink, true); };
+    return () => {
+      window.removeEventListener("beforeunload", warn);
+      document.removeEventListener("click", guardLink, true);
+    };
   }, [courseDirty, batchDirty]);
   function select(c: any) {
     originalCourse.current = courseSnapshot(c);
@@ -85,7 +135,11 @@ export function Courses({ version }: { version: number }) {
     }
   }
   async function saveCourse() {
-    if (batchDirty && !window.confirm("保存课程会关闭未保存的班次修改，确定放弃吗？")) return;
+    if (
+      batchDirty &&
+      !window.confirm("保存课程会关闭未保存的班次修改，确定放弃吗？")
+    )
+      return;
     setBusy(true);
     setError("");
     try {
@@ -115,7 +169,13 @@ export function Courses({ version }: { version: number }) {
     }
   }
   async function saveBatch() {
-    if (courseDirty && !window.confirm("保存班次会重新加载课程，未保存的课程修改将丢失，确定继续吗？")) return;
+    if (
+      courseDirty &&
+      !window.confirm(
+        "保存班次会重新加载课程，未保存的课程修改将丢失，确定继续吗？",
+      )
+    )
+      return;
     setBusy(true);
     setError("");
     try {
@@ -142,8 +202,10 @@ export function Courses({ version }: { version: number }) {
     }
   }
   function editBatch(b: any) {
-    if (batchDirty && !window.confirm("当前班次有未保存的修改，确定放弃吗？")) return;
-    const nextPrice = b.price_cents == null ? "" : (b.price_cents / 100).toFixed(2);
+    if (batchDirty && !window.confirm("当前班次有未保存的修改，确定放弃吗？"))
+      return;
+    const nextPrice =
+      b.price_cents == null ? "" : (b.price_cents / 100).toFixed(2);
     originalBatch.current = batchSnapshot(b, nextPrice);
     setBatch({ ...b });
     setPrice(nextPrice);
@@ -156,7 +218,12 @@ export function Courses({ version }: { version: number }) {
         description="统一维护课程、价格和开班安排；机器人实时读取有效业务数据。"
         actions={
           write && (
-            <button className="button" onClick={() => { if (mayDiscard()) select(blankCourse()); }}>
+            <button
+              className="button"
+              onClick={() => {
+                if (mayDiscard()) select(blankCourse());
+              }}
+            >
               <Plus size={16} />
               新增课程
             </button>
@@ -171,25 +238,25 @@ export function Courses({ version }: { version: number }) {
             value={list.filters.q || ""}
             onChange={(e) => list.change("q", e.target.value)}
           />
-          <select
+          <Select
             aria-label="课程考试"
             value={list.filters.exam_type || ""}
-            onChange={(e) => list.change("exam_type", e.target.value)}
+            onValueChange={(value) => list.change("exam_type", value)}
           >
             <option value="">全部考试</option>
             {exams.map((x) => (
               <option key={x}>{x}</option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
             aria-label="课程销售状态"
             value={list.filters.status || ""}
-            onChange={(e) => list.change("status", e.target.value)}
+            onValueChange={(value) => list.change("status", value)}
           >
             <option value="">全部状态</option>
             <option value="active">正常销售</option>
             <option value="paused">已停售</option>
-          </select>
+          </Select>
         </div>
       </section>
       <div className={"lead-layout " + (edit ? "with-detail" : "")}>
@@ -220,7 +287,7 @@ export function Courses({ version }: { version: number }) {
                         >
                           <strong>{c.name}</strong>
                         </button>
-                        {c.is_demo && <Badge tone="muted">演示</Badge>}
+                        {c.is_demo && <Badge tone="muted">示例</Badge>}
                       </td>
                       <td>
                         {c.exam_type} · {c.class_type}
@@ -252,7 +319,12 @@ export function Courses({ version }: { version: number }) {
               <button
                 className="icon-button"
                 aria-label="关闭课程详情"
-                onClick={() => { if (mayDiscard()) { setEdit(null); setBatch(null); } }}
+                onClick={() => {
+                  if (mayDiscard()) {
+                    setEdit(null);
+                    setBatch(null);
+                  }
+                }}
               >
                 <X size={18} />
               </button>
@@ -270,16 +342,16 @@ export function Courses({ version }: { version: number }) {
               <div className="form-row">
                 <label>
                   考试
-                  <select
+                  <Select
                     value={edit.exam_type}
-                    onChange={(e) =>
-                      setEdit({ ...edit, exam_type: e.target.value })
+                    onValueChange={(value) =>
+                      setEdit({ ...edit, exam_type: value })
                     }
                   >
                     {exams.map((x) => (
                       <option key={x}>{x}</option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label>
                   班型
@@ -307,15 +379,15 @@ export function Courses({ version }: { version: number }) {
                 </label>
                 <label>
                   课程状态
-                  <select
+                  <Select
                     value={edit.status}
-                    onChange={(e) =>
-                      setEdit({ ...edit, status: e.target.value })
+                    onValueChange={(value) =>
+                      setEdit({ ...edit, status: value })
                     }
                   >
                     <option value="active">销售中</option>
                     <option value="paused">停售</option>
-                  </select>
+                  </Select>
                 </label>
               </div>
               <label>
@@ -398,23 +470,23 @@ export function Courses({ version }: { version: number }) {
                   <div className="form-row">
                     <label>
                       授课方式
-                      <select
+                      <Select
                         value={batch.mode}
-                        onChange={(e) =>
-                          setBatch({ ...batch, mode: e.target.value })
+                        onValueChange={(value) =>
+                          setBatch({ ...batch, mode: value })
                         }
                       >
                         <option value="online">线上</option>
                         <option value="offline">线下</option>
                         <option value="hybrid">混合</option>
-                      </select>
+                      </Select>
                     </label>
                     <label>
                       销售状态
-                      <select
+                      <Select
                         value={batch.sale_status}
-                        onChange={(e) =>
-                          setBatch({ ...batch, sale_status: e.target.value })
+                        onValueChange={(value) =>
+                          setBatch({ ...batch, sale_status: value })
                         }
                       >
                         {Object.entries(saleLabels).map(([k, v]) => (
@@ -422,7 +494,7 @@ export function Courses({ version }: { version: number }) {
                             {v}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
                   </div>
                   <label>

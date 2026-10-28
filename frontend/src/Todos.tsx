@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { Link } from "react-router-dom";
 import { api, date, useResource } from "./api";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
@@ -34,16 +35,16 @@ export function Todos({
       <section className="panel">
         <Filters list={list} owners={owners.data || []} />
         <div className="toolbar">
-          <select
+          <Select
             aria-label="待办时间范围"
             value={list.filters.state || "all"}
-            onChange={(e) => list.change("state", e.target.value)}
+            onValueChange={(value) => list.change("state", value)}
           >
             <option value="all">全部待办</option>
             <option value="overdue">已逾期</option>
             <option value="today">今天</option>
             <option value="upcoming">待跟进</option>
-          </select>
+          </Select>
         </div>
         {r.loading ? (
           <Loading />

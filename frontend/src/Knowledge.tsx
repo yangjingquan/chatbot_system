@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -63,7 +64,10 @@ export function Knowledge({
   const list = usePaged("/admin/documents", true, version),
     r = list.resource;
   const people = useResource<any[]>("/admin/knowledge-responsibles", version);
-  const todos = useResource<any>("/admin/knowledge-todos?status=open&page_size=10", version);
+  const todos = useResource<any>(
+    "/admin/knowledge-todos?status=open&page_size=10",
+    version,
+  );
   const { can, user } = useAccess(),
     toast = useToast(),
     upload = useRef<HTMLInputElement>(null);
@@ -365,7 +369,8 @@ export function Knowledge({
             </table>
           </div>
           <p className="footnote">
-            扫描 PDF 已启用 OCR（中英）。过期与内部资料不会进入公开回答。单文件上限 50 MB。
+            扫描 PDF 已启用
+            OCR（中英）。过期与内部资料不会进入公开回答。单文件上限 50 MB。
           </p>
         </section>
       ) : null}
@@ -374,7 +379,10 @@ export function Knowledge({
         <span>
           筛选共 <strong>{r.data?.total || 0}</strong> 份资料
         </span>
-        <small>草稿与正式资料独立 · 支持 Markdown、TXT、PDF（含扫描 OCR）、DOCX；单文件上限 50 MB</small>
+        <small>
+          草稿与正式资料独立 · 支持 Markdown、TXT、PDF（含扫描
+          OCR）、DOCX；单文件上限 50 MB
+        </small>
       </div>
       <div className={"knowledge-layout " + (edit ? "with-editor" : "")}>
         <section className="panel document-panel">
@@ -385,10 +393,10 @@ export function Knowledge({
             placeholder="搜索知识名称"
           />
           <div className="toolbar">
-            <select
+            <Select
               aria-label="知识状态筛选"
               value={list.filters.status || ""}
-              onChange={(e) => list.change("status", e.target.value)}
+              onValueChange={(value) => list.change("status", value)}
             >
               <option value="">全部状态</option>
               {[
@@ -403,16 +411,16 @@ export function Knowledge({
                   {statusLabel[v]}
                 </option>
               ))}
-            </select>
-            <select
+            </Select>
+            <Select
               aria-label="可见范围筛选"
               value={list.filters.visibility || ""}
-              onChange={(e) => list.change("visibility", e.target.value)}
+              onValueChange={(value) => list.change("visibility", value)}
             >
               <option value="">全部可见范围</option>
               <option value="public">公开</option>
               <option value="internal">内部</option>
-            </select>
+            </Select>
           </div>
           {r.loading ? (
             <Loading />
@@ -447,7 +455,7 @@ export function Knowledge({
                             <strong>{d.title}</strong>
                             <small>
                               {d.category}
-                              {d.is_demo ? " · 演示资料" : ""}
+                              {d.is_demo ? " · 示例资料" : ""}
                             </small>
                           </span>
                         </button>
@@ -579,27 +587,27 @@ export function Knowledge({
                 </label>
                 <label>
                   知识类型
-                  <select
+                  <Select
                     value={edit.knowledge_type}
-                    onChange={(e) => change("knowledge_type", e.target.value)}
+                    onValueChange={(value) => change("knowledge_type", value)}
                   >
                     <option value="general">通用说明</option>
                     <option value="course">课程资料</option>
                     <option value="policy">具体考试政策</option>
-                  </select>
+                  </Select>
                 </label>
               </div>
               <div className="form-row">
                 <label>
                   适用考试
-                  <select
+                  <Select
                     value={edit.exam_type}
-                    onChange={(e) => change("exam_type", e.target.value)}
+                    onValueChange={(value) => change("exam_type", value)}
                   >
                     {exams.map((v) => (
                       <option key={v}>{v}</option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label>
                   适用年度
@@ -630,13 +638,13 @@ export function Knowledge({
                 </label>
                 <label>
                   可见范围
-                  <select
+                  <Select
                     value={edit.visibility}
-                    onChange={(e) => change("visibility", e.target.value)}
+                    onValueChange={(value) => change("visibility", value)}
                   >
                     <option value="public">对外公开</option>
                     <option value="internal">内部资料</option>
-                  </select>
+                  </Select>
                 </label>
               </div>
               <label>
@@ -651,9 +659,9 @@ export function Knowledge({
               </label>
               <label>
                 资料负责人
-                <select
+                <Select
                   value={edit.responsible_id || ""}
-                  onChange={(e) => change("responsible_id", e.target.value)}
+                  onValueChange={(value) => change("responsible_id", value)}
                 >
                   <option value="">请选择负责人</option>
                   {edit.responsible_id &&
@@ -667,7 +675,7 @@ export function Knowledge({
                       {p.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <div className="form-row date-fields">
                 <label>
@@ -895,7 +903,7 @@ export function Knowledge({
           <div>
             <h2>
               <FlaskConical size={18} />
-              检索测试
+              检索验证
             </h2>
             <p>
               仅检索当前有效的正式公开资料。政策问题请明确考试、年度和地区。
@@ -905,7 +913,7 @@ export function Knowledge({
         </div>
         <div className="retrieval-input">
           <input
-            aria-label="检索测试问题"
+            aria-label="检索验证问题"
             value={testQuery}
             onChange={(e) => setTestQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && test()}
@@ -915,7 +923,7 @@ export function Knowledge({
             disabled={testBusy || !testQuery.trim()}
             onClick={test}
           >
-            {testBusy ? "检索中…" : "测试检索"}
+            {testBusy ? "检索中…" : "验证检索"}
           </button>
         </div>
         {results && (

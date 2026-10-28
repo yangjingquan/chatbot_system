@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Plus, Save, X } from "lucide-react";
@@ -109,14 +110,14 @@ export function StudentAssociation({
           </label>
           <label>
             关联到已有档案
-            <select value={target} onChange={(e) => setTarget(e.target.value)}>
+            <Select value={target} onValueChange={(value) => setTarget(value)}>
               <option value="">请选择人工核实后的档案</option>
               {choices.data?.items.map((s: any) => (
                 <option key={s.id} value={s.id}>
                   {s.name} · {s.owner} · {s.id.slice(0, 8)}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <p className="footnote">
             最多显示 100 个候选，请输入更具体的姓名或联系方式缩小范围。
@@ -337,7 +338,7 @@ export function Students({
                         >
                           <strong>{s.name}</strong>
                         </button>
-                        {s.is_demo && <Badge tone="muted">演示</Badge>}
+                        {s.is_demo && <Badge tone="muted">示例</Badge>}
                       </td>
                       <td>{s.exam_targets.join("、") || "待了解"}</td>
                       <td>{s.owner}</td>
@@ -412,10 +413,10 @@ export function Students({
                   <label>
                     负责人
                     {can("leads.assign") ? (
-                      <select
+                      <Select
                         value={edit.owner_id || ""}
-                        onChange={(e) =>
-                          setEdit({ ...edit, owner_id: e.target.value || null })
+                        onValueChange={(value) =>
+                          setEdit({ ...edit, owner_id: value || null })
                         }
                       >
                         <option value="">未分配</option>
@@ -427,7 +428,7 @@ export function Students({
                               {!o.is_active ? "（已停用，需重新选择）" : ""}
                             </option>
                           ))}
-                      </select>
+                      </Select>
                     ) : (
                       <input readOnly value={edit.owner} />
                     )}
@@ -521,12 +522,12 @@ export function Students({
                       <div className="knowledge-workflow">
                         <label>
                           需求考试
-                          <select
+                          <Select
                             value={interest.exam_type}
-                            onChange={(e) =>
+                            onValueChange={(value) =>
                               setInterest({
                                 ...interest,
-                                exam_type: e.target.value,
+                                exam_type: value,
                                 course_id: "",
                               })
                             }
@@ -534,7 +535,7 @@ export function Students({
                             {exams.map((x) => (
                               <option key={x}>{x}</option>
                             ))}
-                          </select>
+                          </Select>
                         </label>
                         <label>
                           目标年度
@@ -553,12 +554,12 @@ export function Students({
                         </label>
                         <label>
                           课程
-                          <select
+                          <Select
                             value={interest.course_id || ""}
-                            onChange={(e) =>
+                            onValueChange={(value) =>
                               setInterest({
                                 ...interest,
-                                course_id: e.target.value,
+                                course_id: value,
                               })
                             }
                           >
@@ -572,16 +573,16 @@ export function Students({
                                   {c.name}
                                 </option>
                               ))}
-                          </select>
+                          </Select>
                         </label>
                         <label>
                           需求状态
-                          <select
+                          <Select
                             value={interest.status}
-                            onChange={(e) =>
+                            onValueChange={(value) =>
                               setInterest({
                                 ...interest,
-                                status: e.target.value,
+                                status: value,
                               })
                             }
                           >
@@ -589,7 +590,7 @@ export function Students({
                             <option value="interested">有意向</option>
                             <option value="enrolled">已报名</option>
                             <option value="closed">已结束</option>
-                          </select>
+                          </Select>
                         </label>
                         <label>
                           需求说明
@@ -636,10 +637,12 @@ export function Students({
                       edit.trials.map((t: any) => (
                         <article className="revision-row" key={t.id}>
                           <Link className="text-link" to="/trials">
-                            {t.course_name} · {trialLabels[t.status] || t.status}
+                            {t.course_name} ·{" "}
+                            {trialLabels[t.status] || t.status}
                           </Link>
                           <small>
-                            {t.lead_name || ""} · 意向 {date(t.requested_at, true)}
+                            {t.lead_name || ""} · 意向{" "}
+                            {date(t.requested_at, true)}
                             {t.reason ? ` · ${t.reason}` : ""}
                           </small>
                         </article>
@@ -675,9 +678,9 @@ export function Students({
                         </label>
                         <label>
                           合并到
-                          <select
+                          <Select
                             value={mergeId}
-                            onChange={(e) => setMergeId(e.target.value)}
+                            onValueChange={(value) => setMergeId(value)}
                           >
                             <option value="">请选择目标档案</option>
                             {choices.data?.items
@@ -687,7 +690,7 @@ export function Students({
                                   {s.name} · {s.id.slice(0, 8)}
                                 </option>
                               ))}
-                          </select>
+                          </Select>
                         </label>
                         <label>
                           核验及合并原因

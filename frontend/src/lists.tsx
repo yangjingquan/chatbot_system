@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useState } from "react";
 import { useResource } from "./api";
 
@@ -87,15 +88,15 @@ export function Pager({ list }: { list: ReturnType<typeof usePaged> }) {
       </span>
       <label>
         每页
-        <select
+        <Select
           aria-label="每页条数"
           value={list.size}
-          onChange={(e) => list.setSize(Number(e.target.value))}
+          onValueChange={(value) => list.setSize(Number(value))}
         >
           {[20, 50, 100].map((n) => (
             <option key={n}>{n}</option>
           ))}
-        </select>
+        </Select>
       </label>
       <button
         className="button secondary small"
@@ -155,21 +156,21 @@ export function Filters({
       </label>
       <label>
         考试方向
-        <select
+        <Select
           value={f.exam_type || ""}
-          onChange={(e) => change("exam_type", e.target.value)}
+          onValueChange={(value) => change("exam_type", value)}
         >
           <option value="">全部考试</option>
           {exams.map((x) => (
             <option key={x}>{x}</option>
           ))}
-        </select>
+        </Select>
       </label>
       <label>
         负责人
-        <select
+        <Select
           value={f.owner_id || ""}
-          onChange={(e) => change("owner_id", e.target.value)}
+          onValueChange={(value) => change("owner_id", value)}
         >
           <option value="">全部负责人</option>
           {business && <option value="unassigned">未分配</option>}
@@ -179,15 +180,15 @@ export function Filters({
               {o.is_active === false ? "（已停用）" : ""}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {business && (
         <>
           <label>
             跟进阶段
-            <select
+            <Select
               value={f.stage || ""}
-              onChange={(e) => change("stage", e.target.value)}
+              onValueChange={(value) => change("stage", value)}
             >
               <option value="">全部阶段</option>
               {[
@@ -201,13 +202,13 @@ export function Filters({
               ].map((x) => (
                 <option key={x}>{x}</option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             意向等级
-            <select
+            <Select
               value={f.level || ""}
-              onChange={(e) => change("level", e.target.value)}
+              onValueChange={(value) => change("level", value)}
             >
               <option value="">全部意向</option>
               {[
@@ -220,18 +221,18 @@ export function Filters({
               ].map((x) => (
                 <option key={x}>{x}</option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             联系许可
-            <select
+            <Select
               value={f.contact_state || ""}
-              onChange={(e) => change("contact_state", e.target.value)}
+              onValueChange={(value) => change("contact_state", value)}
             >
               <option value="">全部许可状态</option>
               <option value="allowed">允许本次联系</option>
               <option value="withdrawn">已停止联系</option>
-            </select>
+            </Select>
           </label>
         </>
       )}

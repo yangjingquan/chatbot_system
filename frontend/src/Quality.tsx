@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, date, useResource } from "./api";
@@ -102,14 +103,14 @@ function Gaps({ version }: { version: number }) {
         <div className="list-toolbar">
           <label>
             处理状态
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <Select value={status} onValueChange={(value) => setStatus(value)}>
               <option value="">全部</option>
               {Object.entries(labels).map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <button className="button secondary small" onClick={list.reload}>
             刷新缺口
@@ -204,13 +205,13 @@ function Gaps({ version }: { version: number }) {
           </details>
           <label>
             处理状态
-            <select value={next} onChange={(e) => setNext(e.target.value)}>
+            <Select value={next} onValueChange={(value) => setNext(value)}>
               {Object.entries(labels).map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             人工处理结果
@@ -326,12 +327,15 @@ function Usage({ version }: { version: number }) {
         )}
         {d.anomaly_growth && (
           <div className="error-box" role="status">
-            {d.anomaly_growth.message} 今日 Token {d.anomaly_growth.today_tokens}
+            {d.anomaly_growth.message} 今日 Token{" "}
+            {d.anomaly_growth.today_tokens}
             ，近有记录日均约 {d.anomaly_growth.avg_tokens}。
           </div>
         )}
         {d.currently_degraded && (
-          <p className="footnote">当前处于超预算降级状态，付费模型调用已暂停。</p>
+          <p className="footnote">
+            当前处于超预算降级状态，付费模型调用已暂停。
+          </p>
         )}
         <p>{d.billing_note}</p>
         <dl className="usage-facts">
@@ -470,7 +474,7 @@ function Usage({ version }: { version: number }) {
         </p>
         <div className="form-grid">
           {[
-            ["model", "模型名称（须与本地配置一致）"],
+            ["model", "模型名称（须与服务端配置一致）"],
             ["input_miss", "输入：缓存未命中"],
             ["input_hit", "输入：缓存命中"],
             ["output", "输出单价"],
@@ -564,10 +568,10 @@ function Evaluations({ version }: { version: number }) {
           </button>
           <label>
             历史批次
-            <select
+            <Select
               value={id}
-              onChange={(e) => {
-                setId(e.target.value);
+              onValueChange={(value) => {
+                setId(value);
                 setSample(null);
               }}
             >
@@ -578,7 +582,7 @@ function Evaluations({ version }: { version: number }) {
                   {r.total}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
         {list.error && <ErrorBox text={list.error} />}
@@ -667,7 +671,7 @@ function Evaluations({ version }: { version: number }) {
             </p>
           </details>
           <label>
-            从官网测试后粘贴实际回答
+            从咨询窗口获取实际回答并粘贴
             <textarea
               required
               value={answer}
@@ -677,13 +681,13 @@ function Evaluations({ version }: { version: number }) {
           </label>
           <label>
             验收结论
-            <select
+            <Select
               value={verdict}
-              onChange={(e) => setVerdict(e.target.value)}
+              onValueChange={(value) => setVerdict(value)}
             >
               <option value="pass">通过</option>
               <option value="fail">未通过</option>
-            </select>
+            </Select>
           </label>
           <label>
             人工核对依据

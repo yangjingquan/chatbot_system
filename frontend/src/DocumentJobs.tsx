@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, date, useResource } from "./api";
@@ -83,7 +84,8 @@ export function DocumentJobs({ version }: { version: number }) {
   }
   const failedRows =
     list.data?.items?.filter(
-      (j: any) => j.status === "failed" && !j.validation_error && j.attempts < 3,
+      (j: any) =>
+        j.status === "failed" && !j.validation_error && j.attempts < 3,
     ) || [];
   return (
     <>
@@ -95,10 +97,10 @@ export function DocumentJobs({ version }: { version: number }) {
         <div className="list-toolbar">
           <label>
             任务状态
-            <select
+            <Select
               value={status}
-              onChange={(e) => {
-                setStatus(e.target.value);
+              onValueChange={(value) => {
+                setStatus(value);
                 setPage(1);
               }}
             >
@@ -108,28 +110,28 @@ export function DocumentJobs({ version }: { version: number }) {
                   {v}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             任务类型
-            <select
+            <Select
               value={kind}
-              onChange={(e) => {
-                setKind(e.target.value);
+              onValueChange={(value) => {
+                setKind(value);
                 setPage(1);
               }}
             >
               <option value="">全部类型</option>
               <option value="parse">文件解析</option>
               <option value="index">向量索引</option>
-            </select>
+            </Select>
           </label>
           <label>
             文件类型
-            <select
+            <Select
               value={fileType}
-              onChange={(e) => {
-                setFileType(e.target.value);
+              onValueChange={(value) => {
+                setFileType(value);
                 setPage(1);
               }}
             >
@@ -139,14 +141,14 @@ export function DocumentJobs({ version }: { version: number }) {
                   {s}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             失败原因
-            <select
+            <Select
               value={errorCode}
-              onChange={(e) => {
-                setErrorCode(e.target.value);
+              onValueChange={(value) => {
+                setErrorCode(value);
                 setPage(1);
               }}
             >
@@ -156,7 +158,7 @@ export function DocumentJobs({ version }: { version: number }) {
                   {v}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <button className="button secondary small" onClick={list.reload}>
             刷新任务
@@ -284,9 +286,7 @@ export function DocumentJobs({ version }: { version: number }) {
                             重试任务
                           </button>
                         )}
-                      {j.validation_error && (
-                        <span>请修正后重新上传</span>
-                      )}
+                      {j.validation_error && <span>请修正后重新上传</span>}
                       {j.status === "failed" &&
                         !j.validation_error &&
                         j.attempts >= 3 && (
@@ -319,9 +319,9 @@ export function DocumentJobs({ version }: { version: number }) {
         </div>
       </section>
       <p className="footnote">
-        单文件上限 50
-        MB；扫描 PDF 已启用 OCR。任务保存在数据库，工作进程意外退出后租约过期会重新领取，最多尝试
-        3 次。校验失败（类型/大小）须重新上传，不能批量重试。
+        单文件上限 50 MB；扫描 PDF 已启用
+        OCR。任务保存在数据库，工作进程意外退出后租约过期会重新领取，最多尝试 3
+        次。校验失败（类型/大小）须重新上传，不能批量重试。
       </p>
     </>
   );

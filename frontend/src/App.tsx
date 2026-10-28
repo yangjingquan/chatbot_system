@@ -109,7 +109,7 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
             <span>跟进</span>
           </div>
         </div>
-        <small>本地开发环境 · 培训机构演示资料</small>
+        <small>培训服务与咨询管理</small>
       </aside>
       <main className="login-form">
         <form onSubmit={submit}>
@@ -144,10 +144,7 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
           </button>
           <div className="login-help">
             <ShieldCheck size={18} />
-            <span>
-              初始密码保存在本地项目 .env 文件的
-              ADMIN_PASSWORD，密钥不会发送到浏览器。
-            </span>
+            <span>请使用管理员分配的账号登录，妥善保管您的登录信息。</span>
           </div>
           <Link to="/demo" className="text-link">
             先体验官网智能客服 <ExternalLink size={14} />
@@ -206,9 +203,22 @@ export function App() {
             <span className="company-avatar">知</span>
             <div>
               <strong>{config.data?.company_name || "知行公考"}</strong>
-              <small>单企业 · 本地环境</small>
+              <small>培训服务工作台</small>
             </div>
             <ChevronRight size={14} />
+          </div>
+          <div className="sidebar-data-filter">
+            <label
+              className="toggle-label"
+              title="示例记录与实际业务数据分开统计"
+            >
+              <input
+                type="checkbox"
+                checked={includeDemo}
+                onChange={(e) => setIncludeDemo(e.target.checked)}
+              />
+              包含示例记录
+            </label>
           </div>
           <nav aria-label="主导航">
             {navigation
@@ -284,10 +294,6 @@ export function App() {
             </div>
             <div className="topbar-actions">
               {can("conversations.handle") && <ReceptionStatus />}
-              <span className="local-label">
-                <span className="status-dot green" />
-                本地运行
-              </span>
               <a
                 href="/demo"
                 target="_blank"
@@ -295,7 +301,7 @@ export function App() {
                 className="button secondary small"
               >
                 <ExternalLink size={15} />
-                官网演示
+                官网预览
               </a>
               <button
                 aria-label="刷新数据"
@@ -307,23 +313,6 @@ export function App() {
             </div>
           </header>
           <main className="workspace">
-            <div className="environment-banner">
-              <div>
-                <span className="sample-square" />
-                演示环境
-                <span className="banner-description">
-                  机构、课程价格及种子记录为虚构资料；考试政策以官方公告为准。
-                </span>
-              </div>
-              <label className="toggle-label">
-                <input
-                  type="checkbox"
-                  checked={includeDemo}
-                  onChange={(e) => setIncludeDemo(e.target.checked)}
-                />
-                包含演示记录
-              </label>
-            </div>
             <Routes>
               <Route
                 path="/document-jobs"
@@ -434,7 +423,6 @@ export function App() {
           </main>
           <footer className="workspace-footer">
             <span>知行客服 · 每一次回答，都有据可循</span>
-            <span>本地开发版 v0.4</span>
           </footer>
         </div>
       </div>

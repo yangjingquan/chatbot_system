@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { systemMessageCopy } from "./displayCopy";
 
 export async function api<T = any>(
   path: string,
@@ -20,7 +21,9 @@ export async function api<T = any>(
       window.dispatchEvent(new Event("session-expired"));
     throw Object.assign(
       new Error(
-        typeof data.detail === "string" ? data.detail : "输入内容不符合要求",
+        typeof data.detail === "string"
+          ? systemMessageCopy(data.detail)
+          : "输入内容不符合要求",
       ),
       { status: response.status },
     );

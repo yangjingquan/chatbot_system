@@ -17,6 +17,6 @@ backups/
 *.json.enc
 docs/screenshots
 backend/tests
-frontend/tests
+frontend/tests/*
 scripts/test*
 docs

@@ -33,7 +33,7 @@ export function Demo() {
   return (
     <div className="demo-site">
       <div className="demo-topnotice">
-        培训机构官网演示 · 所有机构、课程及服务内容为虚构设定
+        页面内容为示例，机构及课程信息不构成实际服务或报价。
       </div>
       <header className="demo-nav">
         <a href="/demo" className="demo-brand">
@@ -158,7 +158,7 @@ export function Demo() {
               再讨论合适的课程。
             </h2>
             <p>
-              点击右下角的“在线咨询”，即可询问课程内容、演示价格和试听流程。回答会附上知识来源；资料不足时会提示核实，也可以随时申请人工服务。
+              点击右下角的“在线咨询”，即可询问课程内容、价格和试听流程。回答会附上知识来源；资料不足时会提示核实，也可以随时申请人工服务。
             </p>
             <button className="button" onClick={open}>
               开始咨询 <ArrowRight size={16} />
@@ -185,7 +185,7 @@ export function Demo() {
           <GraduationCap size={24} />
           知行公考
         </a>
-        <span>本地开发演示，不构成真实培训服务或招录承诺。</span>
+        <span>课程与服务以机构实际公布的信息为准，不提供录用承诺。</span>
         <a href="/">进入管理工作台</a>
       </footer>
     </div>

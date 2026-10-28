@@ -1,3 +1,5 @@
+import { Select } from "./Select";
+import { exampleBatchCopy } from "./displayCopy";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, date, useResource } from "./api";
@@ -39,10 +41,13 @@ export function ReceptionStatus() {
         .then(() => setError(""))
         .catch((e) => setError(e.message));
     beat();
-    const timer = setInterval(() => {
-      beat();
-      counts.reload();
-    }, pollMs(wsLive, 60000, 15000));
+    const timer = setInterval(
+      () => {
+        beat();
+        counts.reload();
+      },
+      pollMs(wsLive, 60000, 15000),
+    );
     return () => clearInterval(timer);
   }, [status, wsLive]);
   async function claimNext() {
@@ -54,7 +59,9 @@ export function ReceptionStatus() {
       });
       toast("已接管排队会话");
       counts.reload();
-      window.location.assign("/conversations?conversation_id=" + row.conversation_id);
+      window.location.assign(
+        "/conversations?conversation_id=" + row.conversation_id,
+      );
     } catch (e: any) {
       toast(e.message, true);
     } finally {
@@ -66,21 +73,20 @@ export function ReceptionStatus() {
     <div className="reception-status">
       <label>
         接待状态{" "}
-        <select
+        <Select
           aria-label="我的在线状态"
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onValueChange={(value) => setStatus(value)}
         >
           <option value="online">在线</option>
           <option value="away">暂离</option>
           <option value="offline">离线</option>
-        </select>
+        </Select>
       </label>
       <Link to="/conversations?status=waiting">
         待接待 {counts.data?.waiting ?? "—"}
         {timed > 0 ? ` · 超时 ${timed}` : ""} · 未读{" "}
-        {counts.data?.unread ?? "—"} · 我的接待{" "}
-        {counts.data?.my_active ?? "—"}
+        {counts.data?.unread ?? "—"} · 我的接待 {counts.data?.my_active ?? "—"}
       </Link>
       <button
         className="button secondary small"
@@ -171,14 +177,14 @@ export function Trials({
         <div className="list-toolbar">
           <label>
             申请状态{" "}
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <Select value={status} onValueChange={(value) => setStatus(value)}>
               <option value="">全部状态</option>
               {Object.entries(trialLabels).map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <button className="button secondary small" onClick={list.reload}>
             刷新申请
@@ -195,55 +201,60 @@ export function Trials({
           />
         ) : (
           <>
-          <p className="table-scroll-hint">左右滚动查看完整试听申请表</p>
-          <div className="table-wrap trial-table" role="region" aria-label="试听申请列表，可横向滚动" tabIndex={0}>
-            <table>
-              <thead>
-                <tr>
-                  <th>课程 / 班次</th>
-                  <th>线索</th>
-                  <th>意向时间</th>
-                  <th>确认时间</th>
-                  <th>顾问</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.data.items.map((t: any) => (
-                  <tr key={t.id}>
-                    <td>
-                      {t.course_name}
-                      <small className="cell-sub">{t.batch_name}</small>
-                    </td>
-                    <td>
-                      {t.lead_name || "—"}
-                      <small className="cell-sub">
-                        {t.lead_stage || ""}
-                        {t.student_name ? ` · 学员 ${t.student_name}` : ""}
-                      </small>
-                    </td>
-                    <td>{date(t.requested_at, true)}</td>
-                    <td>
-                      {t.scheduled_at ? date(t.scheduled_at, true) : "待确认"}
-                    </td>
-                    <td>{t.advisor_name}</td>
-                    <td>
-                      <Badge>{trialLabels[t.status]}</Badge>
-                    </td>
-                    <td>
-                      <button
-                        className="button secondary small"
-                        onClick={() => choose(t)}
-                      >
-                        处理申请
-                      </button>
-                    </td>
+            <p className="table-scroll-hint">左右滚动查看完整试听申请表</p>
+            <div
+              className="table-wrap trial-table"
+              role="region"
+              aria-label="试听申请列表，可横向滚动"
+              tabIndex={0}
+            >
+              <table>
+                <thead>
+                  <tr>
+                    <th>课程 / 班次</th>
+                    <th>线索</th>
+                    <th>意向时间</th>
+                    <th>确认时间</th>
+                    <th>顾问</th>
+                    <th>状态</th>
+                    <th>操作</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {list.data.items.map((t: any) => (
+                    <tr key={t.id}>
+                      <td>
+                        {t.course_name}
+                        <small className="cell-sub">{t.batch_name}</small>
+                      </td>
+                      <td>
+                        {t.lead_name || "—"}
+                        <small className="cell-sub">
+                          {t.lead_stage || ""}
+                          {t.student_name ? ` · 学员 ${t.student_name}` : ""}
+                        </small>
+                      </td>
+                      <td>{date(t.requested_at, true)}</td>
+                      <td>
+                        {t.scheduled_at ? date(t.scheduled_at, true) : "待确认"}
+                      </td>
+                      <td>{t.advisor_name}</td>
+                      <td>
+                        <Badge>{trialLabels[t.status]}</Badge>
+                      </td>
+                      <td>
+                        <button
+                          className="button secondary small"
+                          onClick={() => choose(t)}
+                        >
+                          处理申请
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
         <div className="list-toolbar">
@@ -302,9 +313,9 @@ export function Trials({
           )}
           <label>
             接待顾问
-            <select
+            <Select
               value={advisor}
-              onChange={(e) => setAdvisor(e.target.value)}
+              onValueChange={(value) => setAdvisor(value)}
             >
               <option value="">请选择顾问</option>
               {staff.data?.map((s) => (
@@ -317,7 +328,7 @@ export function Trials({
                       : "离线"}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             确认时间
@@ -481,19 +492,19 @@ export function WidgetTrial({
             <>
               <label>
                 课程与班次
-                <select
+                <Select
                   required
                   value={batch}
-                  onChange={(e) => setBatch(e.target.value)}
+                  onValueChange={(value) => setBatch(value)}
                 >
                   <option value="">请选择班次</option>
                   {batches.data?.map((b) => (
                     <option value={b.id} key={b.id}>
-                      {b.course_name} · {b.name}
-                      {b.is_demo ? "（演示）" : ""}
+                      {b.course_name} · {exampleBatchCopy(b.name, b.is_demo)}
+                      {b.is_demo ? "（示例）" : ""}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               {batches.error && <ErrorBox text={batches.error} />}
               <label>

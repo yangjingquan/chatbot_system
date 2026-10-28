@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useState, type FormEvent } from "react";
 import { Activity, Bell, HardDrive, Server } from "lucide-react";
 import { api, date, useResource } from "./api";
@@ -152,11 +153,19 @@ function StatusPanel({ version }: { version: number }) {
             return (
               <div className="metric-card" key={key}>
                 <div className="list-toolbar" style={{ marginBottom: 6 }}>
-                  <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span
+                    style={{ display: "flex", gap: 8, alignItems: "center" }}
+                  >
                     <StatusDot status={c.status || "unknown"} />
                     <strong>{componentLabel[key] || key}</strong>
                   </span>
-                  <Badge tone={c.status === "ok" || c.status === "skipped" ? "green" : "amber"}>
+                  <Badge
+                    tone={
+                      c.status === "ok" || c.status === "skipped"
+                        ? "green"
+                        : "amber"
+                    }
+                  >
                     {c.status}
                   </Badge>
                 </div>
@@ -169,7 +178,8 @@ function StatusPanel({ version }: { version: number }) {
         </div>
       </section>
       <p className="footnote">
-        公开 <code>/api/health</code> 仅返回精简检查结果；本页含故障定位证据。通知默认不外发。
+        公开 <code>/api/health</code>{" "}
+        仅返回精简检查结果；本页含故障定位证据。通知默认不外发。
       </p>
     </>
   );
@@ -215,14 +225,11 @@ function AlertsPanel({ version }: { version: number }) {
       <div className="list-toolbar">
         <label>
           状态
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          >
+          <Select value={filter} onValueChange={(value) => setFilter(value)}>
             <option value="open">未关闭</option>
             <option value="resolved">已恢复</option>
             <option value="">全部</option>
-          </select>
+          </Select>
         </label>
         <button className="button secondary small" onClick={list.reload}>
           <Bell size={14} /> 刷新告警
@@ -254,7 +261,9 @@ function AlertsPanel({ version }: { version: number }) {
                     <Badge tone={a.severity === "critical" ? "amber" : "muted"}>
                       {severityLabel[a.severity] || a.severity}
                     </Badge>
-                    <div className="muted">{statusLabel[a.status] || a.status}</div>
+                    <div className="muted">
+                      {statusLabel[a.status] || a.status}
+                    </div>
                   </td>
                   <td>
                     <strong>{a.title}</strong>
@@ -275,7 +284,9 @@ function AlertsPanel({ version }: { version: number }) {
                   <td>{a.notify_state}</td>
                   <td>
                     {a.status !== "resolved" && (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <div
+                        style={{ display: "flex", gap: 6, flexWrap: "wrap" }}
+                      >
                         {a.status === "open" && (
                           <button
                             className="button secondary small"
@@ -353,14 +364,14 @@ function NotifyPanel({ version }: { version: number }) {
         </label>
         <label>
           渠道
-          <select
+          <Select
             value={form.channel || "none"}
-            onChange={(e) => setForm({ ...form, channel: e.target.value })}
+            onValueChange={(value) => setForm({ ...form, channel: value })}
           >
             <option value="none">不使用</option>
             <option value="email">邮件（预留）</option>
             <option value="webhook">Webhook（预留）</option>
-          </select>
+          </Select>
         </label>
         <label>
           收件邮箱

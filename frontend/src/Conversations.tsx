@@ -1,3 +1,5 @@
+import { Select } from "./Select";
+import { messageCopy, sourcePageCopy } from "./displayCopy";
 import { useEffect, useRef, useState } from "react";
 import {
   Search,
@@ -24,7 +26,6 @@ import {
 } from "./ui";
 import { connectReceptionSocket, pollMs } from "./receptionSocket";
 import { plainAssistantText } from "./messageText";
-
 
 function formatWait(seconds?: number | null) {
   if (seconds == null) return "";
@@ -66,7 +67,13 @@ export function MessageBubble({
           )}
           {message.mode === "deepseek" && <Badge tone="blue">DeepSeek</Badge>}
         </div>
-        <div className="bubble">{message.role === "assistant" ? plainAssistantText(message.content || "正在准备回答…") : message.content || "正在准备回答…"}</div>
+        <div className="bubble">
+          {message.role === "assistant"
+            ? plainAssistantText(
+                messageCopy(message.content || "正在准备回答…", message.mode),
+              )
+            : message.content || "正在准备回答…"}
+        </div>
         {message.sources?.length > 0 && (
           <details className="source-details">
             <summary>查看 {message.sources.length} 个知识来源</summary>
@@ -79,7 +86,7 @@ export function MessageBubble({
                   版本 {s.version}
                   {s.exam_year ? ` · ${s.exam_year}年度` : ""}
                   {s.region ? ` · ${s.region}` : ""}
-                  {s.is_demo ? " · 演示资料" : ""}
+                  {s.is_demo ? " · 示例资料" : ""}
                 </small>
                 <p>{s.text}</p>
               </div>
@@ -166,11 +173,14 @@ export function Conversations({
     return () => stop();
   }, []);
   useEffect(() => {
-    const timer = setInterval(() => {
-      list.reload();
-      receptionStaff.reload();
-      summary.reload();
-    }, pollMs(wsLive, 30000, 5000));
+    const timer = setInterval(
+      () => {
+        list.reload();
+        receptionStaff.reload();
+        summary.reload();
+      },
+      pollMs(wsLive, 30000, 5000),
+    );
     return () => clearInterval(timer);
   }, [wsLive]);
   useEffect(() => {
@@ -285,10 +295,10 @@ export function Conversations({
             </small>
           </div>
           <div className="conversation-filters">
-            <select
+            <Select
               aria-label="接待状态"
               value={pages.filters.status || ""}
-              onChange={(e) => pages.change("status", e.target.value)}
+              onValueChange={(value) => pages.change("status", value)}
             >
               <option value="">全部接待状态</option>
               {["bot", "waiting", "human", "closed"].map((v) => (
@@ -296,7 +306,7 @@ export function Conversations({
                   {statusLabel[v]}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           {list.loading ? (
             <Loading />
@@ -318,9 +328,18 @@ export function Conversations({
                   )}
                   <small>{date(v.updated_at)}</small>
                 </div>
-                <p>{v.last_message_role === "assistant" ? plainAssistantText(v.last_message || "") : v.last_message}</p>
+                <p>
+                  {v.last_message_role === "assistant"
+                    ? plainAssistantText(
+                        messageCopy(
+                          v.last_message || "",
+                          v.is_demo ? "sample" : undefined,
+                        ),
+                      )
+                    : v.last_message}
+                </p>
                 <div className="row-between">
-                  <span>{v.source_page}</span>
+                  <span>{sourcePageCopy(v.source_page)}</span>
                   <Badge
                     tone={
                       v.timed_out
@@ -332,23 +351,19 @@ export function Conversations({
                             : "muted"
                     }
                   >
-                    {v.timed_out
-                      ? "排队超时"
-                      : statusLabel[v.status]}
+                    {v.timed_out ? "排队超时" : statusLabel[v.status]}
                     {v.status === "waiting" && v.waiting_seconds != null
                       ? ` · ${formatWait(v.waiting_seconds)}`
                       : ""}
                   </Badge>
                 </div>
-                {v.is_demo && (
-                  <small className="sample-label">合成演示会话</small>
-                )}
+                {v.is_demo && <small className="sample-label">示例会话</small>}
               </button>
             ))
           ) : (
             <Empty
               title="暂无匹配会话"
-              description="可从官网演示发起新咨询。"
+              description="访客发起咨询后，会在这里显示。"
             />
           )}
           <Pager list={pages} />
@@ -369,11 +384,12 @@ export function Conversations({
                 <div>
                   <h2>
                     {detail.visitor_name}{" "}
-                    {detail.is_demo && <Badge tone="muted">演示</Badge>}
+                    {detail.is_demo && <Badge tone="muted">示例</Badge>}
                   </h2>
                   <p>
-                    {detail.source_page} · {statusLabel[detail.status]} ·
-                    接待人：{detail.assigned_name}
+                    {sourcePageCopy(detail.source_page)} ·{" "}
+                    {statusLabel[detail.status]} · 接待人：
+                    {detail.assigned_name}
                     {detail.waiting_since &&
                       ` · 排队起始 ${date(detail.waiting_since, true)}`}
                     {detail.waiting_seconds != null &&
@@ -381,16 +397,18 @@ export function Conversations({
                     {detail.timed_out && " · 已超时"}
                   </p>
                   {detail.handoff_note ? (
-                    <p className="handoff-note">交接备注：{detail.handoff_note}</p>
+                    <p className="handoff-note">
+                      交接备注：{detail.handoff_note}
+                    </p>
                   ) : null}
                 </div>
                 <div className="actions">
                   {detail.status === "human" && canHandle && (
                     <>
-                      <select
+                      <Select
                         aria-label="转交接待人"
                         value={transferTo}
-                        onChange={(e) => setTransferTo(e.target.value)}
+                        onValueChange={(value) => setTransferTo(value)}
                       >
                         <option value="">选择转交接待人</option>
                         {receptionStaff.data
@@ -406,7 +424,7 @@ export function Conversations({
                               {` · 接待 ${s.active_count ?? 0}/${s.max_active ?? "-"}`}
                             </option>
                           ))}
-                      </select>
+                      </Select>
                       <input
                         aria-label="交接备注"
                         placeholder="交接备注（可选）"
@@ -430,16 +448,18 @@ export function Conversations({
                       </button>
                     </>
                   )}
-                  {detail.status !== "human" && detail.status !== "closed" && canHandle && (
-                    <button
-                      className="button small"
-                      disabled={busy}
-                      onClick={() => action("takeover")}
-                    >
-                      <Headphones size={15} />
-                      人工接管
-                    </button>
-                  )}
+                  {detail.status !== "human" &&
+                    detail.status !== "closed" &&
+                    canHandle && (
+                      <button
+                        className="button small"
+                        disabled={busy}
+                        onClick={() => action("takeover")}
+                      >
+                        <Headphones size={15} />
+                        人工接管
+                      </button>
+                    )}
                   {detail.status === "human" && canHandle && (
                     <button
                       className="button secondary small"
@@ -469,25 +489,31 @@ export function Conversations({
                 <div ref={bottom} />
               </div>
               <div className="reply-area">
-                {canHandle && detail.status === "human" && !!canned.data?.length && (
-                  <div className="canned-replies" aria-label="常用回复">
-                    {canned.data.map((item: any) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className="button secondary small"
-                        disabled={busy}
-                        onClick={() =>
-                          setReply((prev) =>
-                            prev ? prev + (prev.endsWith("\n") ? "" : "\n") + item.content : item.content,
-                          )
-                        }
-                      >
-                        {item.title}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {canHandle &&
+                  detail.status === "human" &&
+                  !!canned.data?.length && (
+                    <div className="canned-replies" aria-label="常用回复">
+                      {canned.data.map((item: any) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="button secondary small"
+                          disabled={busy}
+                          onClick={() =>
+                            setReply((prev) =>
+                              prev
+                                ? prev +
+                                  (prev.endsWith("\n") ? "" : "\n") +
+                                  item.content
+                                : item.content,
+                            )
+                          }
+                        >
+                          {item.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 <label className="sr-only" htmlFor="agent-reply">
                   人工回复
                 </label>
