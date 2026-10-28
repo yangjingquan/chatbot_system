@@ -450,7 +450,7 @@ export function Configuration({
                 <h2>客服预览</h2>
                 <Badge tone="blue">真实接口</Badge>
               </div>
-              <iframe title="智能客服预览" src="/chat" />
+              <iframe title="智能客服预览" src="/chat?preview=1" />
             </section>
           </>
         ) : (

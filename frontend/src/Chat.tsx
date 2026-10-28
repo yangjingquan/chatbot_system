@@ -37,10 +37,14 @@ export function Chat() {
     [contact, setContact] = useState(""),
     [consent, setConsent] = useState(false),
     [contactBusy, setContactBusy] = useState(false);
-  const bottom = useRef<HTMLDivElement>(null),
+  const transcript = useRef<HTMLDivElement>(null),
+    nearBottom = useRef(true),
+    previousMessages = useRef<string | null>(null),
+    previousContactOpen = useRef(false),
     busyRef = useRef(false),
     init = useRef<Promise<any> | null>(null);
   const parentOrigin = new URLSearchParams(location.search).get("parentOrigin");
+  const isPreview = new URLSearchParams(location.search).get("preview") === "1";
   const embedded = window.parent !== window;
   const tokenHeaders = (c: Credential) => ({
     Authorization: "Bearer " + c.token,
@@ -154,8 +158,30 @@ export function Chat() {
     return () => clearInterval(timer);
   }, [credential]);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
-  }, [messages, messages[messages.length - 1]?.content, contactOpen]);
+    if (!config) return;
+    const latest = messages[messages.length - 1];
+    const messageState = JSON.stringify([
+      messages.length,
+      latest?.id,
+      latest?.content,
+    ]);
+    const initial = previousMessages.current === null;
+    const changed = previousMessages.current !== messageState;
+    const openedContact = contactOpen && !previousContactOpen.current;
+    previousMessages.current = messageState;
+    previousContactOpen.current = contactOpen;
+    const element = transcript.current;
+    if (
+      element &&
+      (openedContact ||
+        (messages.length > 0 &&
+          changed &&
+          nearBottom.current &&
+          !(isPreview && initial)))
+    ) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [messages, contactOpen, config, isPreview]);
   async function send(text = question) {
     if (!text.trim() || !credential || busy) return;
     setError("");
@@ -378,7 +404,18 @@ export function Chat() {
           : "资料摘录模式 · 尚未调用大模型"}
         <span>AI 服务</span>
       </div>
-      <div className="chat-transcript" role="log" aria-live="polite">
+      <div
+        ref={transcript}
+        className="chat-transcript"
+        role="log"
+        aria-live="polite"
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          nearBottom.current =
+            element.scrollHeight - element.scrollTop - element.clientHeight <
+            48;
+        }}
+      >
         <div className="welcome-block">
           <div className="welcome-symbol">
             <GraduationCap size={27} />
@@ -499,7 +536,6 @@ export function Chat() {
             }
           />
         )}
-        <div ref={bottom} />
       </div>
       <div className="chat-compose">
         <div className="chat-tools">

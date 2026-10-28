@@ -3353,6 +3353,19 @@ tbody tr:hover {
   padding: 14px;
   background: #fff;
 }
+.metric-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.metric-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.metric-card-detail { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.schema-versions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+.schema-versions div { min-width: 0; }
+.schema-versions dt { color: var(--muted); font-size: 12px; }
+.schema-versions dd { margin: 5px 0 0; color: var(--text); font-size: 16px; font-weight: 600; }
 .status-dot.red { background: #d4534b; }
 .badge.red {
   color: #a33b35;

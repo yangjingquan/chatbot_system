@@ -24,6 +24,15 @@ const componentLabel: Record<string, string> = {
   latency: "请求耗时",
   disk: "磁盘",
   backup: "备份",
+  schema: "数据库版本",
+};
+const componentStatusLabel: Record<string, string> = {
+  ok: "正常",
+  warn: "提醒",
+  fail: "异常",
+  unknown: "未知",
+  skipped: "未启用",
+  degraded: "降级",
 };
 
 function StatusDot({ status }: { status: string }) {
@@ -32,7 +41,7 @@ function StatusDot({ status }: { status: string }) {
       ? "green"
       : status === "warn" || status === "unknown" || status === "degraded"
         ? "amber"
-        : "amber";
+        : "red";
   return <span className={"status-dot " + tone} />;
 }
 
@@ -152,10 +161,8 @@ function StatusPanel({ version }: { version: number }) {
             const c = raw as any;
             return (
               <div className="metric-card" key={key}>
-                <div className="list-toolbar" style={{ marginBottom: 6 }}>
-                  <span
-                    style={{ display: "flex", gap: 8, alignItems: "center" }}
-                  >
+                <div className="metric-card-header">
+                  <span className="metric-card-title">
                     <StatusDot status={c.status || "unknown"} />
                     <strong>{componentLabel[key] || key}</strong>
                   </span>
@@ -163,15 +170,30 @@ function StatusPanel({ version }: { version: number }) {
                     tone={
                       c.status === "ok" || c.status === "skipped"
                         ? "green"
-                        : "amber"
+                        : c.status === "fail"
+                          ? "red"
+                          : "amber"
                     }
                   >
-                    {c.status}
+                    {componentStatusLabel[c.status] || c.status || "未知"}
                   </Badge>
                 </div>
-                <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                  {summarizeComponent(key, c)}
-                </p>
+                {key === "schema" && !c.detail ? (
+                  <dl className="schema-versions">
+                    <div>
+                      <dt>已应用版本</dt>
+                      <dd>{c.applied ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>目标版本</dt>
+                      <dd>{c.expected ?? "—"}</dd>
+                    </div>
+                  </dl>
+                ) : (
+                  <p className="metric-card-detail">
+                    {summarizeComponent(key, c)}
+                  </p>
+                )}
               </div>
             );
           })}
