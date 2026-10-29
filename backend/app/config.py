@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     retention_conversation_days: int = 365
     retention_lead_days: int = 730
     retention_audit_days: int = 1095
+    retention_interval_seconds: int = 3600
     # Public widget rate limits (per client IP).
     public_session_limit: int = 30
     public_session_window: int = 60

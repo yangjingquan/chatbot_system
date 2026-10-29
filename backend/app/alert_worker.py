@@ -46,6 +46,7 @@ def record_cycle_failure(exc):
 def run_cycle():
     with SessionLocal() as db:
         tenants = list(db.scalars(select(Company.id)))
+    from .privacy_lifecycle import execute_retention, retention_check_due
     reachable = probe_api()
     for tenant in tenants:
         with SessionLocal() as db:
@@ -58,6 +59,9 @@ def run_cycle():
             touch_heartbeat(db, 'alert-monitor', 'ok', {'smtp_configured': configured}, tenant_id=tenant)
             evaluate_alerts(db, tenant)
             db.commit()
+            if retention_check_due(db, tenant):
+                execute_retention(db, tenant)
+                db.commit()
         for _ in range(20):
             with SessionLocal() as db:
                 job = claim_email(db, tenant)

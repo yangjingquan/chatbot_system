@@ -245,6 +245,16 @@ export function DocumentJobs({ version }: { version: number }) {
                       <small className="cell-sub">
                         {j.stage} · {j.progress}%
                       </small>
+                      {j.page_count != null && (
+                        <small className="cell-sub">
+                          PDF {j.page_count} 页{j.ocr_pages?.length ? ` · OCR ${j.ocr_pages.join("、")} 页` : " · 未触发 OCR"}
+                        </small>
+                      )}
+                      {j.ocr_warnings?.map((warning: string) => (
+                        <small className="cell-sub ocr-warning" key={warning}>
+                          {warning}
+                        </small>
+                      ))}
                       <progress
                         max={100}
                         value={j.progress}
@@ -320,7 +330,8 @@ export function DocumentJobs({ version }: { version: number }) {
       </section>
       <p className="footnote">
         单文件上限 50 MB；扫描 PDF 已启用
-        OCR。任务保存在数据库，工作进程意外退出后租约过期会重新领取，最多尝试 3
+        OCR，每页单独检查；最多处理 50 个需 OCR 的页面，超限时会拒绝并提示页码，需拆分后重传。
+        低置信度页会在任务记录中标出以供人工核对。任务保存在数据库，工作进程意外退出后租约过期会重新领取，最多尝试 3
         次。校验失败（类型/大小）须重新上传，不能批量重试。
       </p>
     </>

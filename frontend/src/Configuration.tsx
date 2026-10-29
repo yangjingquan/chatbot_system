@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api, date, useResource } from "./api";
 import { Badge, ErrorBox, Loading, PageTitle, useToast } from "./ui";
+import { PrivacyLifecycle } from "./PrivacyLifecycle";
 
 export function Configuration({
   robot = false,
@@ -32,7 +33,6 @@ export function Configuration({
     [questions, setQuestions] = useState(""),
     [embedOrigins, setEmbedOrigins] = useState(""),
     [cannedText, setCannedText] = useState(""),
-    [retention, setRetention] = useState<any>(null),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     if (r.data) {
@@ -46,21 +46,6 @@ export function Configuration({
       );
     }
   }, [r.data]);
-  useEffect(() => {
-    if (robot) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await api("/admin/privacy/retention");
-        if (!cancelled) setRetention(data);
-      } catch {
-        if (!cancelled) setRetention(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [robot, version]);
   if (r.loading) return <Loading />;
   if (r.error) return <ErrorBox text={r.error} retry={r.reload} />;
   if (!form) return <Loading />;
@@ -107,18 +92,6 @@ export function Configuration({
         method: "PATCH",
         body: JSON.stringify(payload),
       });
-      if (!robot && retention) {
-        await api("/admin/privacy/retention", {
-          method: "PATCH",
-          body: JSON.stringify({
-            retention_conversation_days:
-              Number(retention.retention_conversation_days) || 0,
-            retention_lead_days: Number(retention.retention_lead_days) || 0,
-            retention_audit_days: Number(retention.retention_audit_days) || 0,
-            retention_backup_days: Number(retention.retention_backup_days) || 0,
-          }),
-        });
-      }
       onChange();
       toast("配置已保存，新打开的客服窗口会使用新配置");
     } catch (e: any) {
@@ -308,41 +281,6 @@ export function Configuration({
                   更改企业名称不会自动重写知识库中的机构资料，请及时审核并更新相关信息。
                 </p>
               </div>
-              {retention && (
-                <>
-                  <h3 style={{ marginTop: 16 }}>数据留存（天）</h3>
-                  <p className="muted" style={{ marginBottom: 8 }}>
-                    0
-                    表示不自动清理。备份介质上的副本需按备份留存天数另行销毁。详见
-                    docs/备份恢复与密钥轮换.md。RPO/RTO
-                    须机构确认，系统不预设正式承诺。
-                  </p>
-                  {(
-                    [
-                      ["retention_conversation_days", "咨询会话"],
-                      ["retention_lead_days", "线索联系方式"],
-                      ["retention_audit_days", "审计详情"],
-                      ["retention_backup_days", "备份文件建议"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key}>
-                      {label}
-                      <input
-                        type="number"
-                        min={0}
-                        max={3650}
-                        value={retention[key]}
-                        onChange={(e) =>
-                          setRetention({
-                            ...retention,
-                            [key]: e.target.value,
-                          })
-                        }
-                      />
-                    </label>
-                  ))}
-                </>
-              )}
             </>
           )}
         </section>
@@ -499,6 +437,7 @@ export function Configuration({
           </section>
         )}
       </div>
+      {!robot && <PrivacyLifecycle version={version} />}
     </>
   );
 }

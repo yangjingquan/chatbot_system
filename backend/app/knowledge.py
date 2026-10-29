@@ -96,50 +96,109 @@ OCR_ENABLED = True
 OCR_MAX_PAGES = 50
 OCR_DPI = 200
 OCR_LANG = 'chi_sim+eng'
+OCR_TEXT_MIN_CHARS = 20
+OCR_LOW_CONFIDENCE = 50
 
 
-def ocr_pdf_bytes(content: bytes, *, max_pages: int = OCR_MAX_PAGES, dpi: int = OCR_DPI, lang: str = OCR_LANG) -> str:
-    """Rasterize PDF pages and run Tesseract. Overridable in tests via monkeypatch."""
+def _ocr_pdf_pages(content: bytes, page_numbers: list[int], *, dpi: int = OCR_DPI,
+                   lang: str = OCR_LANG) -> dict[int, dict]:
+    """OCR only selected pages, preserving page numbers and per-page confidence."""
     try:
         from pdf2image import convert_from_bytes
         import pytesseract
     except Exception as exc:
         raise HTTPException(503, f'OCR 依赖未就绪（pdf2image/pytesseract）：{exc}') from exc
-    try:
-        images = convert_from_bytes(content, dpi=dpi, first_page=1, last_page=max_pages)
-    except Exception as exc:
-        raise HTTPException(422, f'扫描 PDF 转图像失败，无法 OCR：{exc}') from exc
-    if not images:
-        raise HTTPException(422, '扫描 PDF 无可识别页面，OCR 未提取到文字')
-    parts = []
-    for i, image in enumerate(images):
+    pages = {}
+    for page_number in page_numbers:
         try:
-            page_text = pytesseract.image_to_string(image, lang=lang) or ''
+            images = convert_from_bytes(content, dpi=dpi, first_page=page_number,
+                                        last_page=page_number)
         except Exception as exc:
-            raise HTTPException(422, f'第 {i + 1} 页 OCR 失败：{exc}') from exc
-        parts.append(f'第 {i + 1} 页\n{page_text}')
-    return '\n\n'.join(parts)
+            raise HTTPException(422, f'第 {page_number} 页转图失败，无法 OCR：{exc}') from exc
+        if not images:
+            raise HTTPException(422, f'第 {page_number} 页无法转图，未生成完整草稿')
+        try:
+            data = pytesseract.image_to_data(images[0], lang=lang,
+                                             output_type=pytesseract.Output.DICT)
+        except Exception as exc:
+            raise HTTPException(422, f'第 {page_number} 页 OCR 失败：{exc}') from exc
+        words, confidence = [], []
+        for token, raw_confidence in zip(data.get('text', []), data.get('conf', [])):
+            token = (token or '').strip()
+            if not token:
+                continue
+            words.append(token)
+            try:
+                value = float(raw_confidence)
+                if value >= 0:
+                    confidence.append(value)
+            except (TypeError, ValueError):
+                pass
+        pages[page_number] = {
+            'text': ' '.join(words),
+            'confidence': round(sum(confidence) / len(confidence)) if confidence else None,
+        }
+    return pages
 
 
-def parse_file(filename: str, content: bytes) -> str:
+def ocr_pdf_bytes(content: bytes, *, max_pages: int = OCR_MAX_PAGES, dpi: int = OCR_DPI,
+                  lang: str = OCR_LANG) -> str:
+    """Compatibility helper; reject truncation instead of implying a full parse."""
+    if max_pages < 1:
+        raise HTTPException(422, 'OCR 页数上限必须大于 0')
+    if max_pages > OCR_MAX_PAGES:
+        raise HTTPException(422, f'OCR 单次最多处理 {OCR_MAX_PAGES} 页')
+    try:
+        from pypdf import PdfReader
+        page_count = len(PdfReader(io.BytesIO(content)).pages)
+    except Exception as exc:
+        raise HTTPException(422, 'PDF 无法解析，未生成不完整草稿') from exc
+    if page_count > max_pages:
+        raise HTTPException(422, f'PDF 共 {page_count} 页，超过本次 OCR 上限 {max_pages} 页；请拆分文件后重试')
+    pages = _ocr_pdf_pages(content, list(range(1, page_count + 1)), dpi=dpi, lang=lang)
+    return '\n\n'.join(f'第 {page_number} 页\n{data["text"]}'
+                       for page_number, data in pages.items())
+
+
+def parse_file_result(filename: str, content: bytes) -> tuple[str, dict]:
     suffix = Path(filename).suffix.lower()
     if len(content) > MAX_FILE_BYTES:
         raise HTTPException(413, f'文件不能超过 {MAX_FILE_MB} MB')
+    metadata = {'page_count': None, 'ocr_pages': [], 'ocr_warnings': []}
     try:
         if suffix in ('.md', '.txt'):
             text = content.decode('utf-8-sig')
         elif suffix == '.pdf':
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(content))
-            if reader.is_encrypted or len(reader.pages) > 200:
-                raise ValueError('encrypted or too many pages')
-            text = '\n\n'.join(f'第 {i + 1} 页\n{p.extract_text() or ""}' for i, p in enumerate(reader.pages))
-            if len(re.sub(r'第 \d+ 页|\s', '', text)) < 20:
-                if not OCR_ENABLED:
-                    raise HTTPException(422, '未提取到足够文字，可能是扫描 PDF；OCR 已关闭，请上传可复制文字的 PDF、Markdown、TXT 或 DOCX')
-                text = ocr_pdf_bytes(content)
-                if len(re.sub(r'第 \d+ 页|\s', '', text)) < 20:
-                    raise HTTPException(422, 'OCR 未识别到足够文字，请检查扫描清晰度或改传可复制文字的 PDF / Markdown / TXT / DOCX')
+            if reader.is_encrypted:
+                raise HTTPException(422, 'PDF 已加密，请解除密码保护后重新上传')
+            if len(reader.pages) > 200:
+                raise HTTPException(422, 'PDF 超过单文件 200 页上限，请按页数拆分后重试')
+            metadata['page_count'] = len(reader.pages)
+            page_texts = [(page.extract_text() or '').strip() for page in reader.pages]
+            ocr_pages = [number for number, page_text in enumerate(page_texts, 1)
+                         if len(re.sub(r'\s', '', page_text)) < OCR_TEXT_MIN_CHARS]
+            if ocr_pages and not OCR_ENABLED:
+                raise HTTPException(422, f'第 {ocr_pages[0]} 页文字不足且 OCR 已关闭；请上传可复制文字的 PDF、Markdown、TXT 或 DOCX')
+            if len(ocr_pages) > OCR_MAX_PAGES:
+                sample = '、'.join(str(number) for number in ocr_pages[:10])
+                suffix_hint = '等' if len(ocr_pages) > 10 else ''
+                raise HTTPException(422, f'有 {len(ocr_pages)} 页需要 OCR（第 {sample} 页{suffix_hint}），超过单文件 {OCR_MAX_PAGES} 页上限；请拆分文件后重试，本次未生成不完整草稿')
+            recognized = _ocr_pdf_pages(content, ocr_pages) if ocr_pages else {}
+            metadata['ocr_pages'] = ocr_pages
+            for page_number in ocr_pages:
+                result = recognized[page_number]
+                page_text = result['text'].strip()
+                if len(re.sub(r'\s', '', page_text)) < OCR_TEXT_MIN_CHARS:
+                    raise HTTPException(422, f'第 {page_number} 页 OCR 未识别到足够文字，本次未生成不完整草稿')
+                confidence = result.get('confidence')
+                if confidence is None or confidence < OCR_LOW_CONFIDENCE:
+                    metadata['ocr_warnings'].append(
+                        f'第 {page_number} 页 OCR 置信度{confidence if confidence is not None else "未知"}，请人工核对')
+                page_texts[page_number - 1] = page_text
+            text = '\n\n'.join(f'第 {i + 1} 页\n{page_text}'
+                                for i, page_text in enumerate(page_texts))
         elif suffix == '.docx':
             from docx import Document as Word
             archive = zipfile.ZipFile(io.BytesIO(content))
@@ -156,4 +215,8 @@ def parse_file(filename: str, content: bytes) -> str:
         raise HTTPException(422, '文件无法解析，请检查文件内容、编码或是否加密')
     if not text.strip() or len(text) > 200000 or '\x00' in text:
         raise HTTPException(422, '文件为空、内容过大或包含无效字符')
-    return text
+    return text, metadata
+
+
+def parse_file(filename: str, content: bytes) -> str:
+    return parse_file_result(filename, content)[0]

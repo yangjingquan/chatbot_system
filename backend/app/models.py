@@ -366,7 +366,7 @@ class PrivacyRequest(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     tenant_id: Mapped[str] = mapped_column(String(64), default=TENANT, index=True)
     kind: Mapped[str] = mapped_column(String(24), index=True)  # withdraw_contact | anonymize | delete
-    status: Mapped[str] = mapped_column(String(24), default='open', index=True)  # open | completed | rejected
+    status: Mapped[str] = mapped_column(String(24), default='open', index=True)  # open | needs_review | completed | rejected
     subject_name: Mapped[str] = mapped_column(String(100), default='')
     contact_hint: Mapped[str] = mapped_column(String(120), default='')  # masked hint only, not full contact
     conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)

@@ -33,7 +33,9 @@ def job_data(j):
     result.update(filename=filename,file_type=Path(filename).suffix.lower() if filename else '',
                   error_code=payload.get('error_code') or classify_error(j.error),
                   batch_id=payload.get('batch_id') or '',
-                  validation_error=bool(payload.get('validation_error')))
+                  validation_error=bool(payload.get('validation_error')),
+                  page_count=payload.get('page_count'), ocr_pages=payload.get('ocr_pages') or [],
+                  ocr_warnings=payload.get('ocr_warnings') or [])
     return result
 
 def enqueue_index(db,doc):

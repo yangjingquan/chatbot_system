@@ -10,7 +10,8 @@ from .models import Admin, PrivacyRequest, Lead, now
 from .permissions import require, has_permission
 from .privacy_lifecycle import (
     retention_config, create_privacy_request, complete_privacy_request,
-    apply_retention, withdraw_lead_contact, reapply_completed_privacy, mask_contact,
+    execute_retention, retention_status,
+    withdraw_lead_contact, reapply_completed_privacy, mask_contact,
 )
 from .backup_ops import write_encrypted_backup, read_encrypted_backup, restore_logical, verify_backup_file
 from .monitoring import record_backup_result
@@ -54,6 +55,10 @@ def patch_retention(data: RetentionPatch, user: Admin = Depends(require('setting
     db.commit()
     return retention_config(db, user.tenant_id)
 
+@router.get('/admin/privacy/retention/status')
+def get_retention_status(user: Admin = Depends(require('settings.read')), db: Session = Depends(get_db)):
+    return retention_status(db, user.tenant_id)
+
 class PrivacyCreate(BaseModel):
     kind: Literal['withdraw_contact', 'anonymize', 'delete']
     subject_name: str = Field('', max_length=100)
@@ -82,13 +87,16 @@ def create_request(data: PrivacyCreate, user: Admin = Depends(require('settings.
 class PrivacyComplete(BaseModel):
     resolution: str = Field('', max_length=2000)
     reject: bool = False
+    lead_id: str | None = Field(None, max_length=36)
+    conversation_id: str | None = Field(None, max_length=36)
 
 @router.post('/admin/privacy/requests/{rid}/complete')
 def finish_request(rid: str, data: PrivacyComplete, user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
     req = db.get(PrivacyRequest, rid)
     if not req or req.tenant_id != user.tenant_id:
         raise HTTPException(404, '隐私请求不存在')
-    complete_privacy_request(db, req, actor=user, resolution=data.resolution, reject=data.reject)
+    complete_privacy_request(db, req, actor=user, resolution=data.resolution, reject=data.reject,
+                             lead_id=data.lead_id, conversation_id=data.conversation_id)
     db.commit()
     return request_data(req)
 
@@ -108,8 +116,12 @@ def withdraw_contact(lead_id: str, user: Admin = Depends(require('leads.write'))
 
 @router.post('/admin/privacy/retention/run')
 def run_retention(user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
-    result = apply_retention(db, user.tenant_id)
+    result = execute_retention(db, user.tenant_id)
+    _record(db, user, '手动执行数据留存清理', user.tenant_id,
+            details=f"status={result['status']};conversations={result.get('conversations', 0)};leads={result.get('leads', 0)};audits={result.get('audits', 0)}")
     db.commit()
+    if result['status'] == 'fail':
+        raise HTTPException(503, '留存清理失败，请查看最近运行状态与服务日志。')
     return result
 
 @router.post('/admin/privacy/backup')

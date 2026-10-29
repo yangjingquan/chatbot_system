@@ -31,9 +31,9 @@ def run_one(job_id=None):
         jid,token,kind,payload,did,tenant=job.id,job.lease_token,job.kind,job.payload.copy(),job.document_id,job.tenant_id
     try:
         if kind=='parse':
-            from .knowledge import parse_file
+            from .knowledge import parse_file_result
             progress(jid,token,15,'解析文件内容')
-            content=parse_file(payload['filename'],base64.b64decode(payload['content']))
+            content,parse_info=parse_file_result(payload['filename'],base64.b64decode(payload['content']))
             progress(jid,token,80,'创建待审核草稿')
             with SessionLocal() as db:
                 j=owned_job(db,jid,token)
@@ -42,7 +42,11 @@ def run_one(job_id=None):
                 if not actor or actor.tenant_id!=tenant or not has_permission(actor,'knowledge.write'):raise HTTPException(403,'上传员工已停用或无知识编辑权限，请有权限的员工重试')
                 from .document_service import create_document
                 doc=create_document(db,{'title':Path(payload['filename']).stem[:240] or '上传资料','content':content},actor)
-                j.document_id=doc.id;j.payload={'filename':payload['filename']};j.status='succeeded';j.progress=100;j.stage='已生成草稿';j.lease_token=None;j.lease_until=None;db.commit()
+                j.document_id=doc.id
+                j.payload={'filename':payload['filename'],'batch_id':payload.get('batch_id',''),**parse_info}
+                j.status='succeeded';j.progress=100
+                j.stage=('已生成待审核草稿；OCR 低置信度页需核对' if parse_info['ocr_warnings'] else '已生成待审核草稿')
+                j.lease_token=None;j.lease_until=None;db.commit()
         elif kind=='index':
             with SessionLocal() as db:
                 doc=db.get(Document,did)

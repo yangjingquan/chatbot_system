@@ -3437,6 +3437,65 @@ tbody tr:hover {
   .notify-actions .button { flex: 1 1 auto; }
 }
 
+.privacy-lifecycle { display: grid; gap: 18px; margin-top: 18px; }
+.privacy-retention-panel, .privacy-requests-panel { min-width: 0; padding: 22px; }
+.privacy-lifecycle .panel-heading { align-items: flex-start; }
+.privacy-lifecycle .panel-heading h2,
+.privacy-lifecycle .panel-heading p { margin-top: 0; }
+.privacy-lifecycle .panel-heading p { margin-bottom: 0; }
+.privacy-retention-fields { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 14px; }
+.privacy-retention-fields label,
+.privacy-request-fields label,
+.privacy-lookup-row label,
+.privacy-request-lookup label,
+.privacy-request-list-heading label,
+.privacy-request-actions > label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--text); font-size: 12px; font-weight: 600; }
+.privacy-retention-status { display: flex; align-items: flex-start; gap: 10px; margin-top: 18px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: #f7f9fc; color: var(--text); }
+.privacy-retention-status svg { flex: 0 0 auto; margin-top: 2px; color: var(--blue); }
+.privacy-retention-status strong { display: block; font-size: 12px; font-weight: 550; }
+.privacy-retention-status small { display: block; margin-top: 4px; color: #9b4141; }
+.privacy-retention-note { margin: 10px 0 14px; font-size: 12px; }
+.privacy-request-form { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; }
+.privacy-request-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.privacy-request-fields label { display: flex; min-width: 0; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
+.privacy-lookup-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.privacy-lookup-row label { flex: 1 1 220px; }
+.privacy-lookup-row > span { padding-bottom: 9px; font-size: 12px; }
+.privacy-matches { display: grid; gap: 4px; }
+.privacy-match { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 14px; min-height: 42px; padding: 8px 10px; border: 1px solid #dfe5ed; border-radius: 6px; background: white; color: var(--text); text-align: left; }
+.privacy-match:hover { border-color: #9ab5d7; background: #f3f7fc; }
+.privacy-match span:first-child { display: flex; min-width: 0; flex-direction: column; }
+.privacy-match small { color: var(--muted); font-weight: 400; }
+.privacy-match > span:last-child { color: var(--blue); white-space: nowrap; }
+.privacy-request-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+.privacy-request-list-heading h3 { margin: 0; font-size: 15px; }
+.privacy-request-list-heading label { flex-direction: row; align-items: center; }
+.privacy-request-list-heading select { min-width: 120px; }
+.privacy-request-row { display: grid; grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr); gap: 18px; padding: 18px 2px; border-top: 1px solid var(--border); }
+.privacy-request-summary > div { display: flex; align-items: center; gap: 8px; }
+.privacy-request-summary p { margin: 7px 0 2px; font-size: 12px; }
+.privacy-request-summary small { display: block; margin-top: 4px; color: var(--muted); overflow-wrap: anywhere; }
+.privacy-request-actions { display: grid; align-content: start; gap: 10px; }
+.privacy-request-lookup { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.privacy-request-lookup .privacy-match { grid-column: 1 / -1; }
+.privacy-selected-target { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.privacy-request-actions .actions { flex-wrap: wrap; align-items: center; gap: 8px; }
+.privacy-confirm-copy { display: inline-flex; align-items: center; gap: 6px; color: #8e4b20; font-size: 12px; }
+.privacy-confirm-copy svg { flex: 0 0 auto; }
+.ocr-warning { color: #8b5a20; font-weight: 550; }
+@media (max-width: 760px) {
+  .privacy-retention-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .privacy-request-row { grid-template-columns: 1fr; gap: 12px; }
+}
+@media (max-width: 520px) {
+  .privacy-retention-panel, .privacy-requests-panel { padding: 18px 15px; }
+  .privacy-retention-fields, .privacy-request-fields { grid-template-columns: 1fr; }
+  .privacy-lookup-row > span { flex-basis: 100%; padding-bottom: 0; }
+  .privacy-request-list-heading { align-items: flex-start; flex-direction: column; }
+  .privacy-request-list-heading label { align-items: flex-start; }
+  .privacy-request-actions .actions > * { flex: 1 1 auto; }
+}
+
 
 .reception-pulse {
   padding: 8px 12px;
