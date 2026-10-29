@@ -22,10 +22,12 @@ if [[ -f "$SUM_FILE" ]]; then
   fi
   echo "校验和通过"
 else
-  echo "未找到 $SUM_FILE，跳过校验和"
+  echo "未找到 ${SUM_FILE}，无法验证备份完整性" >&2
+  exit 1
 fi
 WORK="$FILE"
 CLEANUP=""
+trap 'if [[ -n "$CLEANUP" ]]; then rm -f "$CLEANUP"; fi' EXIT
 if [[ "$FILE" == *.enc ]]; then
   if [[ -z "${BACKUP_PASSPHRASE:-}" ]]; then
     echo "加密备份需要 BACKUP_PASSPHRASE" >&2
@@ -36,6 +38,5 @@ if [[ "$FILE" == *.enc ]]; then
   openssl enc -d -aes-256-cbc -pbkdf2 -in "$FILE" -out "$WORK" -pass env:BACKUP_PASSPHRASE
 fi
 echo "备份内容列表（前 40 行）："
-docker compose exec -T db pg_restore -l < "$WORK" | head -40
-[[ -n "$CLEANUP" ]] && rm -f "$CLEANUP"
+docker compose exec -T db pg_restore -l < "$WORK" | sed -n '1,40p'
 echo "检查完成"

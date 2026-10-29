@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     data_dir: str = './data'
     # Directory for logical/encrypted backups written by scripts (host path or container /data/backups).
     backup_dir: str = './data/backups'
+    # Full pg_dump backups are distinct from the limited logical JSON backup.
+    physical_backup_dir: str = './backups'
+    physical_backup_max_age_minutes: int = 75
     smtp_host: str = ''
     smtp_port: int = 587
     smtp_security: str = 'starttls'
@@ -36,6 +39,8 @@ class Settings(BaseSettings):
     smtp_from: str = ''
     smtp_timeout_seconds: int = 15
     alert_monitor_interval_seconds: int = 60
+    alert_api_health_url: str = 'http://backend:8000/api/health'
+    api_metric_flush_seconds: int = 15
     # Default retention days when company config omits the field. 0 = do not auto-clean.
     retention_conversation_days: int = 365
     retention_lead_days: int = 730

@@ -26,7 +26,24 @@ async def lifespan(app):
         db.commit()
     thread=threading.Thread(target=warm_embeddings,daemon=True)
     thread.start()
+    # Publish aggregates from this API process so the independent monitor can
+    # evaluate request latency without anyone opening the operations page.
+    stop_metrics=threading.Event()
+    def publish_metrics():
+        from .monitoring import publish_api_latency
+        interval=max(5,min(settings().api_metric_flush_seconds,300))
+        while not stop_metrics.wait(interval):
+            try:
+                with SessionLocal() as db:
+                    publish_api_latency(db)
+                    db.commit()
+            except Exception:
+                pass  # A later heartbeat reports recovery; no sensitive data is logged.
+    metrics_thread=threading.Thread(target=publish_metrics,daemon=True)
+    metrics_thread.start()
     yield
+    stop_metrics.set()
+    metrics_thread.join(timeout=1)
 
 app=FastAPI(title='知行客服 API',version='0.4.0',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json',redoc_url=None)
 hosts=[h.strip() for h in settings().allowed_hosts.split(',') if h.strip()]

@@ -1,26 +1,62 @@
 """Periodic alert evaluation and SMTP delivery, isolated from document processing."""
 import time
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 from sqlalchemy import select
 from .alert_mail import MailConfigurationError, _mail_settings, claim_email, finish_email, send_alert_email
 from .config import settings
 from .db import SessionLocal, engine
 from .models import Alert, Company
-from .monitoring import evaluate_alerts, notify_config, redact_log, touch_heartbeat
+from .monitoring import evaluate_alerts, get_heartbeat, notify_config, redact_log, touch_heartbeat
+
+
+def probe_api():
+    try:
+        cfg=settings()
+        host=urlsplit(cfg.public_origin).netloc
+        request=Request(cfg.alert_api_health_url,headers={'Host':host} if host else {})
+        with urlopen(request, timeout=3) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        return False
+
+
+def record_probe(db, tenant, reachable):
+    row=get_heartbeat(db, 'api-probe', tenant)
+    failures=0 if reachable else int((row.detail or {}).get('failures',0) if row and row.tenant_id==tenant else 0)+1
+    status='ok' if reachable else 'fail' if failures>=2 else 'warn'
+    return touch_heartbeat(db,'api-probe',status,{'failures':failures,
+                           'detail':'API 探测正常' if reachable else f'API 探测连续失败 {failures} 次'},tenant_id=tenant)
+
+
+def record_cycle_failure(exc):
+    """Persist a safe error only if the database is still reachable."""
+    try:
+        with SessionLocal() as db:
+            for tenant in db.scalars(select(Company.id)):
+                previous=get_heartbeat(db,'alert-monitor',tenant)
+                detail=dict(previous.detail or {}) if previous and previous.tenant_id==tenant else {}
+                detail['last_error']=redact_log(type(exc).__name__,120)
+                touch_heartbeat(db,'alert-monitor','fail',detail,tenant_id=tenant)
+            db.commit()
+    except Exception:
+        pass
 
 
 def run_cycle():
     with SessionLocal() as db:
         tenants = list(db.scalars(select(Company.id)))
+    reachable = probe_api()
     for tenant in tenants:
         with SessionLocal() as db:
-            # API latency samples are process-local: only the API may evaluate them.
-            evaluate_alerts(db, tenant, include_latency=False)
+            record_probe(db, tenant, reachable)
             try:
                 _mail_settings()
                 configured = True
             except MailConfigurationError:
                 configured = False
             touch_heartbeat(db, 'alert-monitor', 'ok', {'smtp_configured': configured}, tenant_id=tenant)
+            evaluate_alerts(db, tenant)
             db.commit()
         for _ in range(20):
             with SessionLocal() as db:
@@ -57,6 +93,7 @@ def main():
         try:
             run_cycle()
         except Exception as exc:
+            record_cycle_failure(exc)
             print('告警巡检暂不可用，将稍后重试：' + redact_log(type(exc).__name__, 120), flush=True)
         time.sleep(interval)
 

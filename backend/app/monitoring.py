@@ -6,6 +6,7 @@ operators must set them explicitly; this module never forces outbound delivery.
 """
 from __future__ import annotations
 import re
+import hashlib
 import shutil
 import threading
 import time
@@ -34,7 +35,6 @@ MODEL_ERROR_RATE = 0.3
 MODEL_TIMEOUT_MIN = 2
 LATENCY_WARN_MS = 8000
 DISK_WARN_PCT = 90
-BACKUP_STALE_HOURS = 48
 
 SECRET_RE = re.compile(
     r'(?i)((?:authorization\s*[:=]\s*bearer\s+)|(?:api[_-]?key\s*[:=]\s*)|(?:password\s*[:=]\s*)|(?:(?:session_secret|contact_secret|postgres_password)\s*[:=]\s*))\S+'
@@ -79,11 +79,57 @@ def latency_stats() -> dict:
     }
 
 
+def publish_api_latency(db: Session, tenant_id: str = TENANT):
+    """Publish aggregate API latency, never request paths or request data."""
+    return touch_heartbeat(db, 'api-latency', 'ok', latency_stats(), tenant_id=tenant_id)
+
+
+def check_api_latency(db: Session, tenant_id: str = TENANT) -> dict:
+    row = get_heartbeat(db, 'api-latency', tenant_id)
+    max_age = max(60, min(max(5, settings().api_metric_flush_seconds), 300) * 3)
+    if not row or row.tenant_id != tenant_id or not row.updated_at or (now()-aware(row.updated_at)).total_seconds() > max_age:
+        return {'status':'unknown', 'count':0, 'p50_ms':None, 'p95_ms':None, 'max_ms':None,
+                'detail':'尚无近期 API 耗时样本'}
+    data = dict(row.detail or {})
+    data['status'] = 'fail' if (data.get('p95_ms') or 0) >= LATENCY_WARN_MS else 'ok'
+    data['updated_at'] = _iso(row.updated_at)
+    return data
+
+
+def check_alert_monitor(db: Session, tenant_id: str = TENANT) -> dict:
+    row = get_heartbeat(db, 'alert-monitor', tenant_id)
+    if not row or row.tenant_id != tenant_id or not row.updated_at:
+        return {'status':'warn', 'detail':'尚无告警巡检记录', 'updated_at':None}
+    age = max(0, int((now()-aware(row.updated_at)).total_seconds()))
+    max_age = max(90, min(max(5, settings().alert_monitor_interval_seconds), 3600)*3)
+    failed = row.status == 'fail' or age > max_age
+    return {'status':'fail' if failed else 'ok', 'updated_at':_iso(row.updated_at),
+            'detail': ('最近一次告警巡检失败或心跳过期' if failed else f'最近巡检距今 {age} 秒'),
+            'age_seconds':age, 'last_error':(row.detail or {}).get('last_error','')}
+
+
+def check_api_probe(db: Session, tenant_id: str = TENANT) -> dict:
+    row = get_heartbeat(db, 'api-probe', tenant_id)
+    max_age = max(90, min(max(5, settings().alert_monitor_interval_seconds), 3600)*3)
+    if not row or row.tenant_id != tenant_id or not row.updated_at or (now()-aware(row.updated_at)).total_seconds() > max_age:
+        return {'status':'unknown', 'detail':'尚无近期 API 独立探测结果'}
+    return {'status':row.status, 'detail':(row.detail or {}).get('detail',''), 'updated_at':_iso(row.updated_at)}
+
+
+def heartbeat_key(name: str, tenant_id: str = TENANT) -> str:
+    return name if tenant_id == TENANT else name[:22] + ':' + hashlib.sha256(tenant_id.encode()).hexdigest()[:16]
+
+
+def get_heartbeat(db: Session, name: str, tenant_id: str = TENANT) -> OpsHeartbeat | None:
+    return db.get(OpsHeartbeat, heartbeat_key(name, tenant_id))
+
+
 def touch_heartbeat(db: Session, name: str, status: str = 'ok', detail: dict | None = None,
                     tenant_id: str = TENANT) -> OpsHeartbeat:
-    row = db.get(OpsHeartbeat, name)
+    key = heartbeat_key(name, tenant_id)
+    row = db.get(OpsHeartbeat, key)
     if not row:
-        row = OpsHeartbeat(name=name, tenant_id=tenant_id)
+        row = OpsHeartbeat(name=key, tenant_id=tenant_id)
         db.add(row)
     row.tenant_id = tenant_id
     row.status = status
@@ -121,7 +167,7 @@ def check_redis() -> dict:
 
 
 def check_worker(db: Session, tenant_id: str = TENANT) -> dict:
-    row = db.get(OpsHeartbeat, 'worker')
+    row = get_heartbeat(db, 'worker', tenant_id)
     if not row or row.tenant_id != tenant_id:
         queued = db.scalar(
             select(func.count()).select_from(DocumentJob).where(
@@ -232,13 +278,16 @@ def check_disk() -> dict:
 
 
 def check_backup(db: Session, tenant_id: str = TENANT) -> dict:
-    row = db.get(OpsHeartbeat, 'backup')
-    root = Path(settings().backup_dir)
+    row = get_heartbeat(db, 'backup', tenant_id)
+    if row and row.tenant_id != tenant_id:
+        row = None
+    root = Path(settings().physical_backup_dir)
     files = []
     try:
         if root.is_dir():
             files = sorted(
-                [p for p in root.iterdir() if p.is_file() and p.suffix in ('.bin', '.enc', '.gz', '.dump', '.sql')],
+                [p for p in root.iterdir() if p.is_file() and
+                 (p.name.endswith('.dump') or p.name.endswith('.dump.enc') or p.name.endswith('.dump.gz'))],
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
@@ -251,28 +300,25 @@ def check_backup(db: Session, tenant_id: str = TENANT) -> dict:
         'updated_at': _iso(row.updated_at) if row else None,
         'detail': (row.detail if row else {}) or {},
     }
-    if row and row.status == 'fail':
-        return {
-            'status': 'fail',
-            'detail': '最近一次备份检查失败',
-            'heartbeat': heartbeat,
-            'latest_file': latest.name if latest else None,
-        }
     if latest:
-        age_h = (time.time() - latest.stat().st_mtime) / 3600
-        status = 'ok' if age_h <= BACKUP_STALE_HOURS else 'warn'
+        age_minutes = max(0, (time.time() - latest.stat().st_mtime) / 60)
+        maximum = max(1, settings().physical_backup_max_age_minutes)
+        valid_size = latest.stat().st_size > 0
+        status = 'ok' if valid_size and age_minutes <= maximum else 'fail'
+        detail = (f'完整数据库备份 {latest.name} 为空，需重新备份' if not valid_size else
+                  f'完整数据库备份 {latest.name} 已过期（约 {age_minutes:.0f} 分钟，阈值 {maximum} 分钟）' if status == 'fail' else
+                  f'最新完整数据库备份 {latest.name}（约 {age_minutes:.0f} 分钟前）；文件存在不代表已通过恢复演练')
         return {
             'status': status,
-            'detail': f'最新备份 {latest.name}（约 {age_h:.1f} 小时前）',
+            'detail': detail,
             'latest_file': latest.name,
-            'age_hours': round(age_h, 1),
+            'age_hours': round(age_minutes / 60, 1),
+            'max_age_minutes': maximum,
             'heartbeat': heartbeat,
         }
-    if row and row.status == 'ok':
-        return {'status': 'ok', 'detail': '有备份心跳记录', 'heartbeat': heartbeat, 'latest_file': None}
     return {
-        'status': 'warn',
-        'detail': '尚未发现备份文件；请配置主机定时备份或在后台创建逻辑备份',
+        'status': 'fail',
+        'detail': '未在配置的主机备份目录发现完整数据库备份；请核对目录挂载和定时备份',
         'heartbeat': heartbeat,
         'latest_file': None,
     }
@@ -297,16 +343,16 @@ def check_schema(db: Session | None = None) -> dict:
 
 
 def collect_status(db: Session, tenant_id: str = TENANT) -> dict:
-    lat = latency_stats()
-    lat_status = 'fail' if (lat.get('p95_ms') or 0) >= LATENCY_WARN_MS else 'ok'
+    lat = check_api_latency(db, tenant_id)
     components = {
-        'api': {'status': 'ok', 'detail': 'API process responding'},
+        'api': check_api_probe(db, tenant_id),
+        'alert_monitor': check_alert_monitor(db, tenant_id),
         'database': check_database(db),
         'redis': check_redis(),
         'worker': check_worker(db, tenant_id),
         'jobs': check_jobs(db, tenant_id),
         'model': check_model(db, tenant_id),
-        'latency': {**lat, 'status': lat_status},
+        'latency': lat,
         'disk': check_disk(),
         'backup': check_backup(db, tenant_id),
         'schema': check_schema(db),
@@ -323,12 +369,15 @@ def collect_status(db: Session, tenant_id: str = TENANT) -> dict:
 
 
 ALERT_DEFS = {
+    'api_down': ('critical', 'API 独立探测连续失败'),
+    'alert_monitor_stale': ('critical', '告警巡检进程失败或心跳过期'),
     'worker_stale': ('critical', '文档任务 Worker 无心跳或已过期'),
     'job_backlog': ('warning', '文档任务积压或近期失败偏多'),
     'model_errors': ('critical', '模型调用错误率偏高或超时增多'),
     'latency_high': ('warning', 'API 请求耗时偏高'),
     'disk_low': ('critical', '数据盘可用空间不足'),
-    'backup_failed': ('critical', '备份检查失败或备份过旧'),
+    'backup_failed': ('critical', '完整数据库备份缺失或过期'),
+    'logical_backup_failed': ('warning', '逻辑备份检查失败'),
     'redis_down': ('warning', 'Redis 不可用，已回退内存限流'),
     'database_down': ('critical', '数据库连接异常'),
     'schema_lag': ('critical', '数据库 schema 版本落后于运行代码'),
@@ -385,6 +434,10 @@ def evaluate_alerts(db: Session, tenant_id: str = TENANT, *, include_latency: bo
         if active and row:
             raised.append(row)
 
+    for key,code in (('api','api_down'),('alert_monitor','alert_monitor_stale')):
+        component=c[key]
+        if component['status'] in ('ok','fail'):
+            bump(code,component['status']=='fail',component.get('detail',''),component)
     bump('database_down', c['database']['status'] == 'fail',
          c['database'].get('detail', '数据库异常'), c['database'])
     bump('redis_down', c['redis']['status'] == 'fail',
@@ -398,7 +451,7 @@ def evaluate_alerts(db: Session, tenant_id: str = TENANT, *, include_latency: bo
     bump('model_errors', model['status'] == 'fail',
          f"近 1 小时错误 {model['errors_1h']}/{model['calls_1h']}，超时 {model['timeouts_1h']}", model)
     lat = c['latency']
-    if include_latency:
+    if include_latency and lat.get('status') in ('ok','fail'):
         bump('latency_high', lat.get('status') == 'fail',
              f"p95={lat.get('p95_ms')}ms（样本 {lat.get('count')}）", lat)
     disk = c['disk']
@@ -407,6 +460,9 @@ def evaluate_alerts(db: Session, tenant_id: str = TENANT, *, include_latency: bo
     backup = c['backup']
     bump('backup_failed', backup['status'] == 'fail',
          backup.get('detail', '备份异常'), backup)
+    logical=backup.get('heartbeat') or {}
+    if logical.get('status') in ('ok','fail'):
+        bump('logical_backup_failed',logical['status']=='fail','最近一次逻辑备份检查失败' if logical['status']=='fail' else '逻辑备份检查正常',logical)
     schema = c.get('schema') or {}
     bump('schema_lag', schema.get('status') == 'fail',
          f"schema applied={schema.get('applied')} expected={schema.get('expected')}", schema)
@@ -423,10 +479,12 @@ def notify_config(db: Session, tenant_id: str = TENANT) -> dict:
     company = db.get(Company, tenant_id)
     cfg = (company.config if company else {}) or {}
     raw = cfg.get('_ops_notify') or {}
-    heartbeat = db.get(OpsHeartbeat, 'alert-monitor')
+    heartbeat = get_heartbeat(db, 'alert-monitor', tenant_id)
     monitor = None
     if heartbeat and heartbeat.tenant_id == tenant_id:
-        monitor = {'last_seen_at': _iso(heartbeat.updated_at),
+        health = check_alert_monitor(db, tenant_id)
+        monitor = {'last_seen_at': _iso(heartbeat.updated_at), 'status':health['status'],
+                   'last_error':health.get('last_error',''),
                    'smtp_configured': bool((heartbeat.detail or {}).get('smtp_configured'))}
     return {
         'enabled': bool(raw.get('enabled')),

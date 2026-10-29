@@ -16,6 +16,7 @@ const statusLabel: Record<string, string> = {
 };
 const componentLabel: Record<string, string> = {
   api: "API",
+  alert_monitor: "告警巡检",
   database: "数据库",
   redis: "Redis",
   worker: "文档 Worker",
@@ -23,7 +24,7 @@ const componentLabel: Record<string, string> = {
   model: "模型调用",
   latency: "请求耗时",
   disk: "磁盘",
-  backup: "备份",
+  backup: "完整数据库备份",
   schema: "数据库版本",
 };
 const componentStatusLabel: Record<string, string> = {
@@ -106,7 +107,7 @@ function StatusPanel({ version }: { version: number }) {
     try {
       const r = await api("/admin/ops/backup-check", { method: "POST" });
       status.reload();
-      toast(r.ok ? "备份检查通过" : "备份检查未通过，请查看告警");
+      toast(r.ok ? "逻辑备份检查通过" : "逻辑备份检查未通过，请查看告警");
     } catch (e: any) {
       toast(e.message, true);
     } finally {
@@ -149,7 +150,7 @@ function StatusPanel({ version }: { version: number }) {
               disabled={busy}
               onClick={backupCheck}
             >
-              <HardDrive size={14} /> 检查备份
+              <HardDrive size={14} /> 检查逻辑备份
             </button>
             <button className="button secondary small" onClick={status.reload}>
               刷新
@@ -414,7 +415,7 @@ function NotifyPanel({ version }: { version: number }) {
           <p>{form.note}</p>
           <p>
             {form.monitor
-              ? `巡检进程最近运行：${date(form.monitor.last_seen_at, true)}；SMTP 参数${form.monitor.smtp_configured ? "已填写" : "未填写完整"}。`
+              ? `巡检进程最近记录：${date(form.monitor.last_seen_at, true)}；状态${form.monitor.status === "ok" ? "正常" : "异常，请检查服务"}；SMTP 参数${form.monitor.smtp_configured ? "已填写" : "未填写完整"}。${form.monitor.last_error ? ` 错误类型：${form.monitor.last_error}。` : ""}`
               : "尚未收到巡检进程心跳，请检查 alert-monitor 服务。"}
           </p>
         </div>

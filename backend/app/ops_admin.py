@@ -137,7 +137,7 @@ def backup_check(user: Admin = Depends(require('settings.write')), db: Session =
     candidates = []
     if root.is_dir():
         candidates = sorted(
-            [p for p in root.iterdir() if p.is_file()],
+            [p for p in root.iterdir() if p.is_file() and p.name.endswith('.json.enc')],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -146,11 +146,11 @@ def backup_check(user: Admin = Depends(require('settings.write')), db: Session =
         evaluate_alerts(db, user.tenant_id)
         _record(db, user, '备份检查失败', details='no_backup_file')
         db.commit()
-        return {'ok': False, 'detail': '备份目录中没有文件'}
+        return {'ok': False, 'detail': '逻辑备份目录中没有备份文件'}
     path = candidates[0]
     try:
         info = verify_backup_file(path)
-        ok = bool(info.get('ok') or info.get('checksum_ok'))
+        ok = bool(info.get('ok'))
         record_backup_result(db, ok, {'file': path.name, **{k: info.get(k) for k in ('ok', 'checksum_ok', 'counts')}},
                              user.tenant_id)
         evaluate_alerts(db, user.tenant_id)

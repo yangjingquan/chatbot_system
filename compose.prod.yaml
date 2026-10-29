@@ -15,6 +15,8 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    volumes:
+      - ${PHYSICAL_BACKUP_HOST_DIR:-/opt/chatbot/backups}:/host-backups:ro
   worker:
     environment:
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
@@ -22,5 +24,8 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+  alert-monitor:
+    volumes:
+      - ${PHYSICAL_BACKUP_HOST_DIR:-/opt/chatbot/backups}:/host-backups:ro
   # web ports live only in compose.yaml (${WEB_BIND}:${WEB_PORT}:80).
   # Compose merges ports by appending; a second ports list here would bind twice and fail.

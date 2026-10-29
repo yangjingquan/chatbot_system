@@ -92,6 +92,7 @@ def test_backup_failure_alert_and_notify_stub(admin, tmp_path, monkeypatch):
     from app.config import settings
     settings.cache_clear()
     settings().backup_dir = str(tmp_path)
+    settings().physical_backup_dir = str(tmp_path)
 
     # No backup file -> check endpoint records failure
     r = admin.post('/api/admin/ops/backup-check')
@@ -121,10 +122,14 @@ def test_backup_failure_alert_and_notify_stub(admin, tmp_path, monkeypatch):
         alert = db.scalar(select(Alert).where(Alert.code == 'backup_failed', Alert.status.in_(['open', 'acked'])))
         assert alert.notify_state in ('queued', 'skipped', 'pending')
 
-    # Clear failure
+    # Logical success alone must not hide a missing full database backup.
     with SessionLocal() as db:
         record_backup_result(db, True, {'file': 'ok.json.enc'})
         (tmp_path / 'ok.json.enc').write_bytes(b'placeholder')
+        evaluate_alerts(db, TENANT)
+        db.commit()
+        assert db.scalar(select(Alert).where(Alert.code == 'backup_failed', Alert.status.in_(['open', 'acked'])))
+        (tmp_path / 'zhixing-test.dump').write_bytes(b'synthetic-full-backup')
         evaluate_alerts(db, TENANT)
         db.commit()
         open_backup = db.scalar(select(Alert).where(Alert.code == 'backup_failed', Alert.status.in_(['open', 'acked'])))
@@ -316,3 +321,102 @@ def test_smtp_ssl_delivery_to_local_tls_server(client, tmp_path, monkeypatch):
     thread.join(10)
     assert not thread.is_alive() and not errors
     assert len(received)==1 and b'receiver@example.invalid' in received[0]
+
+
+def test_full_backup_missing_empty_stale_and_recovery(admin, tmp_path, monkeypatch):
+    import os
+    import time
+    from app.config import settings
+    from app.monitoring import check_backup
+    monkeypatch.setattr(settings(),'physical_backup_dir',str(tmp_path))
+    monkeypatch.setattr(settings(),'physical_backup_max_age_minutes',75)
+    with SessionLocal() as db:
+        record_backup_result(db,True,{'file':'logical.json.enc'})
+        (tmp_path/'logical.json.enc').write_bytes(b'partial-logical-backup')
+        (tmp_path/'unfinished.partial').write_bytes(b'in-progress')
+        assert check_backup(db)['status']=='fail'
+        full=tmp_path/'zhixing-test.dump'
+        full.write_bytes(b'')
+        assert check_backup(db)['status']=='fail'
+        full.write_bytes(b'not-a-real-pg-dump')
+        os.utime(full,(time.time()-76*60,)*2)
+        assert check_backup(db)['status']=='fail'
+        evaluate_alerts(db);db.commit()
+        alert=db.scalar(select(Alert).where(Alert.code=='backup_failed',Alert.status.in_(['open','acked'])))
+        assert alert and '过期' in alert.message
+        alert.status='acked';db.commit()
+        os.utime(full,None)
+        assert check_backup(db)['status']=='ok'
+        evaluate_alerts(db);db.commit()
+        assert db.get(Alert,alert.id).status=='resolved'
+
+
+def test_background_monitor_detects_and_recovers_without_page_visit(tmp_path, monkeypatch):
+    import uuid
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app import alert_worker
+    from app.config import settings
+    from app.models import Company
+    from app.migrations import migrate_schema
+    tenant='monitor-'+uuid.uuid4().hex
+    engine=create_engine('sqlite:///'+str(tmp_path/'monitor.db'))
+    migrate_schema(engine)
+    session_factory=sessionmaker(engine,expire_on_commit=False)
+    with session_factory() as db:
+        db.add(Company(id=tenant,config={'_ops_notify':{'enabled':True,'channel':'email','email_to':'qa@example.invalid'}}));db.commit()
+    monkeypatch.setattr(alert_worker,'SessionLocal',session_factory)
+    monkeypatch.setattr(settings(),'physical_backup_dir',str(tmp_path))
+    delivered=[]
+    monkeypatch.setattr(alert_worker,'send_alert_email',lambda job,recipient:delivered.append((job['id'],job['event'])))
+    monkeypatch.setattr(alert_worker,'probe_api',lambda:False)
+    alert_worker.run_cycle()
+    alert_worker.run_cycle()
+    with session_factory() as db:
+        alert=db.scalar(select(Alert).where(Alert.tenant_id==tenant,Alert.code=='api_down',Alert.status=='open'))
+        assert alert and (alert.id,'alert') in delivered
+        aid=alert.id
+        from app.monitoring import get_heartbeat
+        monitor=get_heartbeat(db,'alert-monitor',tenant)
+        assert monitor and monitor.status=='ok'
+    monkeypatch.setattr(alert_worker,'probe_api',lambda:True)
+    alert_worker.run_cycle()
+    with session_factory() as db:
+        assert db.get(Alert,aid).status=='resolved'
+        assert (aid,'recovery') in delivered
+    engine.dispose()
+
+
+def test_background_monitor_failure_and_shared_latency_are_visible(admin, monkeypatch):
+    from app import alert_worker
+    from app.monitoring import check_alert_monitor, check_api_latency, publish_api_latency, record_request_latency
+    alert_worker.record_cycle_failure(RuntimeError('not-for-logs'))
+    with SessionLocal() as db:
+        monitor=check_alert_monitor(db)
+        assert monitor['status']=='fail' and monitor['last_error']=='RuntimeError'
+        record_request_latency(12000)
+        publish_api_latency(db);db.commit()
+        assert check_api_latency(db)['p95_ms'] is not None
+        touch_heartbeat(db,'alert-monitor','ok',{});db.commit()
+
+
+def test_api_probe_uses_public_host_for_trusted_host_validation(monkeypatch):
+    from app import alert_worker
+    from app.config import settings
+
+    monkeypatch.setattr(settings(), 'public_origin', 'https://cs.example.invalid')
+    monkeypatch.setattr(settings(), 'alert_api_health_url', 'http://backend:8000/api/health')
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+    def open_probe(request, timeout):
+        assert request.full_url == 'http://backend:8000/api/health'
+        assert request.get_header('Host') == 'cs.example.invalid'
+        assert timeout == 3
+        return Response()
+
+    monkeypatch.setattr(alert_worker, 'urlopen', open_probe)
+    assert alert_worker.probe_api()

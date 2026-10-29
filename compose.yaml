@@ -36,6 +36,11 @@ services:
       CONTACT_SECRET: ${CONTACT_SECRET:-}
       CONTACT_SECRET_PREVIOUS: ${CONTACT_SECRET_PREVIOUS:-}
       BACKUP_DIR: ${BACKUP_DIR:-/data/backups}
+      PHYSICAL_BACKUP_DIR: /host-backups
+      PHYSICAL_BACKUP_MAX_AGE_MINUTES: ${PHYSICAL_BACKUP_MAX_AGE_MINUTES:-75}
+      ALERT_MONITOR_INTERVAL_SECONDS: ${ALERT_MONITOR_INTERVAL_SECONDS:-60}
+      ALERT_API_HEALTH_URL: ${ALERT_API_HEALTH_URL:-http://backend:8000/api/health}
+      API_METRIC_FLUSH_SECONDS: ${API_METRIC_FLUSH_SECONDS:-15}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
@@ -52,6 +57,7 @@ services:
     volumes:
       - ./knowledge_base:/knowledge_base:ro
       - app_data:/data
+      - ${PHYSICAL_BACKUP_HOST_DIR:-./backups}:/host-backups:ro
       - model_cache:/models
     depends_on:
       db:
@@ -91,8 +97,9 @@ services:
       ALERT_MONITOR_INTERVAL_SECONDS: ${ALERT_MONITOR_INTERVAL_SECONDS:-60}
     volumes:
       - app_data:/data
+      - ${PHYSICAL_BACKUP_HOST_DIR:-./backups}:/host-backups:ro
     depends_on:
-      backend:
+      db:
         condition: service_healthy
     restart: unless-stopped
   web:
