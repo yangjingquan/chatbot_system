@@ -164,7 +164,7 @@ def link(lead_id:str,data:LinkInput,user:Admin=Depends(require('students.write')
         if data.student_id and data.student_id!=lead.student_id:raise HTTPException(409,'已有关联学员，请由管理员核实后解除或合并')
         return student_data(db,scoped_object(db,Student,lead.student_id,user),True,user)
     if target:
-        if target.is_demo!=lead.is_demo:raise HTTPException(422,'演示记录与真实业务记录不能关联')
+        if target.is_demo!=lead.is_demo:raise HTTPException(422,'不同数据范围的记录不能关联')
         if target.owner_id!=lead.owner_id:
             check_permission(user,'leads.assign')
             assign_lead(db,lead,db.get(Admin,target.owner_id) if target.owner_id else None)
@@ -223,7 +223,7 @@ def merge(student_id:str,data:MergeInput,user:Admin=Depends(require('students.me
     if len(rows)!=2:raise HTTPException(404,'学员档案不存在')
     source,target=rows[student_id],rows[data.target_id]
     if source.status!='active' or target.status!='active' or source.version!=data.source_version or target.version!=data.target_version:raise HTTPException(409,'档案已变化，请重新加载后合并')
-    if source.is_demo!=target.is_demo:raise HTTPException(422,'演示档案与真实业务档案不能合并')
+    if source.is_demo!=target.is_demo:raise HTTPException(422,'不同数据范围的档案不能合并')
     lock_conversations(db,list(db.scalars(select(Lead.conversation_id).where(Lead.student_id.in_([source.id,target.id])))))
     for lead in db.scalars(select(Lead).where(Lead.student_id==source.id).order_by(Lead.id).with_for_update()):lead.student_id=target.id
     for row in db.scalars(select(StudentInterest).where(StudentInterest.student_id==source.id)):row.student_id=target.id

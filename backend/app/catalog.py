@@ -148,7 +148,6 @@ def public_source(db,c):
             price_valid=(not b.price_from or aware(b.price_from)<=aware(now())) and (not b.price_until or aware(b.price_until)>=aware(now()))
             if b.price_cents is not None and price_valid:pieces.append(f'当前有效价格：{b.price_cents/100:.2f}元。')
             else:pieces.append('当前没有有效报价，须由人工确认，不能沿用历史价格。')
-    if c.is_demo:pieces.append('以上为虚构演示课程、价格及安排，不构成真实报价。')
     text='\n'.join(pieces)
     version=hashlib.sha256(('|'.join(versions)+text).encode()).hexdigest()[:20]
     return {'kind':'catalog','course_id':c.id,'document_id':'catalog:'+c.id,'chunk_id':'catalog:'+c.id,'title':title,'category':'课程业务数据','text':text,'version':version,'exam_type':c.exam_type,'exam_year':None,'region':'全国','is_demo':c.is_demo,'source_url':None}
@@ -170,6 +169,6 @@ def seed_catalog(db):
     if company.config.get('_catalog_seeded'):return
     records=[('公安联考','公安联考基础班',1680,48),('国考','公务员国考基础班',1280,40),('省考','公务员省考基础班',1380,44),('选调生','选调生考试基础班',1480,40),('事业单位','事业单位考试基础班',980,32),('社会招警','社会招警基础班',1580,48),('辅警','辅警招聘基础班',680,24),('社区工作者','社区工作者考试基础班',780,28)]
     for exam,name,price,hours in records:
-        c=Course(name=name,exam_type=exam,hours=hours,class_type='基础班',is_demo=True,description='线上教学和电子练习资料；考试报名费、交通食宿不包含。实际交易须人工确认。')
-        db.add(c);db.flush();db.add(CourseBatch(course_id=c.id,name='演示基础班',price_cents=price*100,sale_status='open',schedule='线上直播与回放；实际开班日期由顾问确认'))
+        c=Course(name=name,exam_type=exam,hours=hours,class_type='基础班',is_demo=False,description='线上教学和电子练习资料；考试报名费、交通食宿不包含。')
+        db.add(c);db.flush();db.add(CourseBatch(course_id=c.id,name='基础班',price_cents=price*100,sale_status='open',schedule='线上直播与回放；具体开班日期由顾问确认'))
     company.config={**company.config,'_catalog_seeded':True}

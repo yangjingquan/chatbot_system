@@ -1,5 +1,9 @@
 export type Credential = { id: string; token: string };
 
+export function sessionStorageKey(isPreview: boolean): string {
+  return isPreview ? "zhixing_preview_session" : "zhixing_session";
+}
+
 export async function restoreSession<T>(
   saved: Credential | null,
   load: (credential: Credential) => Promise<T>,

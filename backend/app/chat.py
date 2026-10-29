@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
 from .models import Company, Conversation, Document, Lead, Message, TENANT, now
-from .security import digest, limit, visitor, client_ip, assert_embed_allowed
+from .security import digest, limit, visitor, client_ip, assert_embed_allowed, normalize_origin
 from .knowledge import retrieve, retrieval_status, historical_commercial_text
 from .scoring import analyze_messages, WITHDRAW_CONTACT, RULE_VERSION
 from .llm import deepseek_stream
@@ -96,12 +96,12 @@ def config(db: Session = Depends(get_db)):
     return {**{k:values[k] for k in ('company_name','bot_name','welcome','suggested_questions','service_hours','contact_notice')},
             'privacy_notice':values.get('privacy_notice') or DEFAULT_PRIVACY_NOTICE,
             'mode':'deepseek' if settings().deepseek_api_key else 'extractive',
-            'model':settings().deepseek_model, 'retrieval':retrieval_status(),
-            'demo_notice':'知行公考为演示机构，课程及价格为虚构设定，考试政策以官方公告为准。'}
+            'model':settings().deepseek_model, 'retrieval':retrieval_status()}
 
 class SessionCreate(BaseModel):
     source_page: str = Field('官网',max_length=300)
     embed_origin: str | None = Field(None,max_length=300)
+    preview_mode: bool = False
 
 @router.post('/sessions')
 def new_session(data: SessionCreate, request: Request, db: Session = Depends(get_db)):
@@ -109,14 +109,21 @@ def new_session(data: SessionCreate, request: Request, db: Session = Depends(get
     cfg=settings()
     limit('session:'+ip, cfg.public_session_limit, cfg.public_session_window)
     embed_origin=assert_embed_allowed(db, request, data.embed_origin)
+    public_origin=normalize_origin(cfg.public_origin)
+    is_preview=bool(data.preview_mode and embed_origin==public_origin)
+    if data.preview_mode and not is_preview:
+        raise HTTPException(403,'预览会话只能从本站发起')
     token=secrets.token_urlsafe(48)
-    page=data.source_page
-    if page.startswith(('http://','https://')):
-        parts=urlsplit(page)
-        page=f'{parts.scheme}://{parts.netloc}{parts.path}'[:300]
-    elif page in ('官网','官网演示','官网嵌入') or not page:
-        page=embed_origin
-    conv=Conversation(token_hash=digest(token),source_page=page[:300])
+    if is_preview:
+        page='机器人配置预览' if data.source_page=='机器人配置预览' else '官网预览'
+    else:
+        page=data.source_page
+        if page.startswith(('http://','https://')):
+            parts=urlsplit(page)
+            page=f'{parts.scheme}://{parts.netloc}{parts.path}'[:300]
+        elif page in ('官网','官网演示','官网嵌入','官网预览','机器人配置预览') or not page:
+            page=embed_origin
+    conv=Conversation(token_hash=digest(token),source_page=page[:300],is_demo=is_preview)
     db.add(conv)
     db.commit()
     return {'id':conv.id,'token':token,'embed_origin':embed_origin}
@@ -273,7 +280,7 @@ def chat(session_id: str, data: ChatInput, request: Request, db: Session = Depen
                     piece=f'[{i+1}] {source["title"]}\n{source["text"][:650]}\n\n'
                     text+=piece
                     yield event('delta',{'text':piece})
-                end='以上经营资料为演示设定。如需实际报价、开班日期或政策资格确认，请转人工核实。'
+                end='如需确认具体报价、开班日期或政策资格，请联系顾问核实。'
                 message=stop_for_human() or stop_for_stale()
                 if message:
                     yield event('error',{'message':message})

@@ -220,8 +220,7 @@ def trial_batch_display_name(name,is_demo):
     return '基础班' if is_demo and name=='演示基础班' else name
 
 def trial_batch_text(name,is_demo):
-    label=trial_batch_display_name(name,is_demo)
-    return label+'（示例）' if is_demo else label
+    return trial_batch_display_name(name,is_demo)
 
 def trial_data(db,t,public=False):
     batch=db.get(CourseBatch,t.batch_id);course=db.get(Course,batch.course_id) if batch else None
@@ -384,7 +383,7 @@ def visitor_change_trial(sid:str,tid:str,data:VisitorTrialChange,request:Request
     return trial_data(db,t,True)
 
 @router.get('/admin/trials')
-def trials(paging:Paging=Depends(),status:str='',include_demo:bool=True,user:Admin=Depends(require('conversations.read')),db:Session=Depends(get_db)):
+def trials(paging:Paging=Depends(),status:str='',include_demo:bool=False,user:Admin=Depends(require('conversations.read')),db:Session=Depends(get_db)):
     scoped=scope_conversations(select(Conversation.id),user)
     if not include_demo:scoped=scoped.where(Conversation.is_demo.is_(False))
     query=select(Trial).where(Trial.tenant_id==user.tenant_id,Trial.conversation_id.in_(scoped))

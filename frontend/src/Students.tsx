@@ -8,7 +8,7 @@ import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
 import { exams, Filters, Pager, usePaged } from "./lists";
 import { trialLabels } from "./Reception";
 import { followupCopy } from "./timeCopy";
-import { exampleBatchCopy } from "./displayCopy";
+import { batchDisplayName } from "./displayCopy";
 
 export function StudentAssociation({
   lead,
@@ -340,7 +340,6 @@ export function Students({
                         >
                           <strong>{s.name}</strong>
                         </button>
-                        {s.is_demo && <Badge tone="muted">示例</Badge>}
                       </td>
                       <td>{s.exam_targets.join("、") || "待了解"}</td>
                       <td>{s.owner}</td>
@@ -644,8 +643,7 @@ export function Students({
                           </Link>
                           <small>
                             {t.lead_name || ""} ·{" "}
-                            {exampleBatchCopy(t.batch_name, t.is_demo)}
-                            {t.is_demo ? "（示例）" : ""} · 意向{" "}
+                            {batchDisplayName(t.batch_name)} · 意向{" "}
                             {date(t.requested_at, true)}
                             {t.reason ? ` · ${t.reason}` : ""}
                           </small>

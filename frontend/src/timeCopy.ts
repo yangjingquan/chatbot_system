@@ -25,8 +25,8 @@ function formatBeijingDateTime(value: string) {
 
 /** Normalize legacy ISO timestamps embedded in generated follow-up notes. */
 export function followupCopy(value: string): string {
-  const sampleNameNormalized = value.startsWith("【试听·自动待办】")
-    ? value.replaceAll("演示基础班", "基础班（示例）")
+  const customerCopy = value.startsWith("【试听·自动待办】")
+    ? value.replaceAll("演示基础班", "基础班").replaceAll("（示例）", "")
     : value;
-  return sampleNameNormalized.replace(ISO_TIMESTAMP, formatBeijingDateTime);
+  return customerCopy.replace(ISO_TIMESTAMP, formatBeijingDateTime);
 }

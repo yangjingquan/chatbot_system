@@ -1,5 +1,5 @@
 import { Select } from "./Select";
-import { exampleBatchCopy } from "./displayCopy";
+import { batchDisplayName } from "./displayCopy";
 import { followupCopy } from "./timeCopy";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -285,8 +285,7 @@ export function Trials({
                       <td>
                         {t.course_name}
                         <small className="cell-sub">
-                          {exampleBatchCopy(t.batch_name, t.is_demo)}
-                          {t.is_demo ? "（示例）" : ""}
+                          {batchDisplayName(t.batch_name)}
                         </small>
                       </td>
                       <td>
@@ -342,8 +341,7 @@ export function Trials({
         <section className="panel quality-editor">
           <h2>
             {selected.course_name} ·{" "}
-            {exampleBatchCopy(selected.batch_name, selected.is_demo)}
-            {selected.is_demo ? "（示例）" : ""} ·{" "}
+            {batchDisplayName(selected.batch_name)} ·{" "}
             {trialLabels[selected.status]}
           </h2>
           <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
@@ -665,8 +663,7 @@ export function WidgetTrial({
           </strong>
           <p>
             {receipt.course_name} ·{" "}
-            {exampleBatchCopy(receipt.batch_name, receipt.is_demo)}
-            {receipt.is_demo ? "（示例）" : ""}
+            {batchDisplayName(receipt.batch_name)}
           </p>
           <p>意向时间：{trialReceiptTime(receipt.requested_at)}（北京时间）</p>
           {receipt.scheduled_at && (
@@ -711,8 +708,7 @@ export function WidgetTrial({
                   <option value="">请选择班次</option>
                   {batches.data?.map((b) => (
                     <option value={b.id} key={b.id}>
-                      {b.course_name} · {exampleBatchCopy(b.name, b.is_demo)}
-                      {b.is_demo ? "（示例）" : ""}
+                      {b.course_name} · {batchDisplayName(b.name)}
                     </option>
                   ))}
                 </Select>
@@ -740,8 +736,7 @@ export function WidgetTrial({
             <div className="widget-trial-item" key={t.id}>
               <p>
                 <strong>{trialLabels[t.status]}</strong> · {t.course_name} ·{" "}
-                {exampleBatchCopy(t.batch_name, t.is_demo)}
-                {t.is_demo ? "（示例）" : ""}
+                {batchDisplayName(t.batch_name)}
                 <br />
                 {t.scheduled_at
                   ? "确认时间：" + date(t.scheduled_at, true)

@@ -17,7 +17,7 @@ import { Filters, Pager, usePaged, localTime, isoTime } from "./lists";
 import { StudentAssociation } from "./Students";
 import { trialLabels } from "./Reception";
 import { followupCopy } from "./timeCopy";
-import { exampleBatchCopy } from "./displayCopy";
+import { batchDisplayName } from "./displayCopy";
 import { useAccess } from "./auth";
 import {
   Badge,
@@ -226,7 +226,6 @@ export function Leads({
                           <span>
                             <strong>
                               {l.name}
-                              {l.is_demo && <Badge tone="muted">示例</Badge>}
                             </strong>
                             <small>
                               {!l.contact_allowed && (
@@ -314,7 +313,7 @@ export function Leads({
             <div className="panel-heading">
               <div>
                 <h2>{detail.name}</h2>
-                <small>{detail.is_demo ? "示例记录" : "网站咨询线索"}</small>
+                <small>网站咨询线索</small>
               </div>
               <button
                 className="icon-button"
@@ -496,8 +495,7 @@ export function Leads({
                 <article className="revision-row" key={t.id}>
                   <Link className="text-link" to={"/trials"}>
                     {t.course_name} ·{" "}
-                    {exampleBatchCopy(t.batch_name, t.is_demo)}
-                    {t.is_demo ? "（示例）" : ""} ·{" "}
+                    {batchDisplayName(t.batch_name)} ·{" "}
                     {trialLabels[t.status] || t.status}
                   </Link>
                   <small>

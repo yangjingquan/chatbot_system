@@ -18,6 +18,7 @@ import { systemMessageCopy, welcomeCopy } from "./displayCopy";
 import {
   consumeEvents,
   restoreSession,
+  sessionStorageKey,
   type Credential,
 } from "./chatTransport";
 
@@ -44,7 +45,10 @@ export function Chat() {
     busyRef = useRef(false),
     init = useRef<Promise<any> | null>(null);
   const parentOrigin = new URLSearchParams(location.search).get("parentOrigin");
-  const isPreview = new URLSearchParams(location.search).get("preview") === "1";
+  const query = new URLSearchParams(location.search);
+  const isPreview = query.get("preview") === "1";
+  const previewMode = isPreview || query.get("previewMode") === "1";
+  const savedSessionKey = sessionStorageKey(previewMode);
   const embedded = window.parent !== window;
   function reportPreviewStatus(status: "ready" | "error", message = "") {
     if (!isPreview || !embedded) return;
@@ -79,15 +83,22 @@ export function Chat() {
       );
     else
       try {
-        localStorage.setItem("zhixing_session", JSON.stringify(c));
+        localStorage.setItem(savedSessionKey, JSON.stringify(c));
       } catch {}
   }
   async function create() {
     const c = await api<Credential>("/widget/sessions", {
       method: "POST",
       body: JSON.stringify({
-        source_page: embedded ? "官网嵌入" : "官网",
+        source_page: isPreview
+          ? "机器人配置预览"
+          : previewMode
+            ? "官网预览"
+            : embedded
+              ? "官网嵌入"
+              : "官网",
         embed_origin: parentOrigin || location.origin,
+        preview_mode: previewMode,
       }),
     });
     persist(c);
@@ -131,13 +142,12 @@ export function Chat() {
           }
           try {
             saved = JSON.parse(
-              localStorage.getItem("zhixing_session") || "null",
+              localStorage.getItem(savedSessionKey) || "null",
             );
           } catch {}
         }
         const savedCredential =
           saved &&
-          typeof saved.id === "string" &&
           typeof saved.token === "string"
             ? saved
             : null;

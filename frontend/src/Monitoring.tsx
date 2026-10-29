@@ -365,7 +365,7 @@ function NotifyPanel({ version }: { version: number }) {
     setBusy(true);
     try {
       await api("/admin/ops/notify/test", { method: "POST" });
-      toast("测试邮件已排队，请在告警列表中查看发送状态");
+      toast("验证邮件已排队，请在告警列表中查看发送状态");
     } catch (err: any) {
       toast(err.message, true);
     } finally {
@@ -454,11 +454,11 @@ function NotifyPanel({ version }: { version: number }) {
               form.email_to !== cfg.data.email_to
             }
           >
-            发送测试邮件
+            发送验证邮件
           </button>
         </div>
         <p className="notify-hint">
-          先保存设置，再发送测试邮件。测试成功后可在告警列表的“全部”或“已恢复”中查看。
+          先保存设置，再发送一封验证邮件。发送状态可在告警列表中查看。
         </p>
       </form>
     </section>

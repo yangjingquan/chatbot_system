@@ -20,6 +20,8 @@ async def lifespan(app):
         from .document_service import ensure_history
         ensure_history(db)
         catalog.seed_catalog(db)
+        from .customer_readiness import prepare_customer_data
+        prepare_customer_data(db)
         chat.backfill_analysis(db)
         students.backfill_crm(db)
         if settings().embedding_enabled:jobs.backfill_index_jobs(db)

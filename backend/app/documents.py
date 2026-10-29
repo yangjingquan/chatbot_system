@@ -62,7 +62,7 @@ def responsibles(user:Admin=Depends(require('knowledge.read')),db:Session=Depend
     return [{'id':a.id,'name':a.name,'role':a.role} for a in db.scalars(select(Admin).where(Admin.tenant_id==user.tenant_id,Admin.is_active.is_(True),Admin.role.in_(['admin','knowledge'])).order_by(Admin.name))]
 
 @router.get('/documents')
-def documents(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:str='',visibility:str='',include_demo:bool=True,user:Admin=Depends(require('knowledge.read')),db:Session=Depends(get_db)):
+def documents(filters:BusinessFilters=Depends(),paging:Paging=Depends(),status:str='',visibility:str='',include_demo:bool=False,user:Admin=Depends(require('knowledge.read')),db:Session=Depends(get_db)):
     query=common(select(Document).where(Document.tenant_id==user.tenant_id),Document,filters.model_copy(update={'include_demo':include_demo}))
     def working(field):
         draft=select(DocumentRevision.data[field].as_string()).where(DocumentRevision.document_id==Document.id,DocumentRevision.status.in_(['draft','submitted'])).order_by(DocumentRevision.number.desc()).limit(1).scalar_subquery()

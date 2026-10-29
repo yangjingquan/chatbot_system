@@ -5,7 +5,7 @@
     "category": "机构介绍",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "01-institution.md",
     "reviewed_on": "2026-10-26"
@@ -16,7 +16,7 @@
     "category": "公安联考",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-police.md",
     "reviewed_on": "2026-10-26"
@@ -27,7 +27,7 @@
     "category": "公务员国考",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-national.md",
     "reviewed_on": "2026-10-26"
@@ -38,7 +38,7 @@
     "category": "公务员省考",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-provincial.md",
     "reviewed_on": "2026-10-26"
@@ -49,7 +49,7 @@
     "category": "选调生考试",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-selected.md",
     "reviewed_on": "2026-10-26"
@@ -60,7 +60,7 @@
     "category": "事业单位考试",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-public.md",
     "reviewed_on": "2026-10-26"
@@ -71,7 +71,7 @@
     "category": "社会招警",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-social-police.md",
     "reviewed_on": "2026-10-26"
@@ -82,7 +82,7 @@
     "category": "辅警招聘",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-auxiliary.md",
     "reviewed_on": "2026-10-26"
@@ -93,7 +93,7 @@
     "category": "社区工作者考试",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "course-community.md",
     "reviewed_on": "2026-10-26"
@@ -104,7 +104,7 @@
     "category": "价格与报名",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "10-price.md",
     "reviewed_on": "2026-10-26"
@@ -115,7 +115,7 @@
     "category": "学习服务",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "11-learning.md",
     "reviewed_on": "2026-10-26"
@@ -126,7 +126,7 @@
     "category": "价格与报名",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "12-trial.md",
     "reviewed_on": "2026-10-26"
@@ -137,7 +137,7 @@
     "category": "课务售后",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "13-refund.md",
     "reviewed_on": "2026-10-26"
@@ -148,7 +148,7 @@
     "category": "考试基础",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": "https://www.moe.gov.cn/jyb_xxgk/moe_1777/moe_1779/201603/t20160316_233754.html",
     "filename": "14-police-difference.md",
     "reviewed_on": "2026-10-26"
@@ -159,7 +159,7 @@
     "category": "考试基础",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": "https://www.scs.gov.cn/",
     "filename": "15-exam-policy.md",
     "reviewed_on": "2026-10-26"
@@ -170,7 +170,7 @@
     "category": "考试基础",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "16-selected-public.md",
     "reviewed_on": "2026-10-26"
@@ -181,7 +181,7 @@
     "category": "服务规则",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "17-privacy.md",
     "reviewed_on": "2026-10-26"
@@ -192,18 +192,18 @@
     "category": "课务售后",
     "visibility": "public",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "18-support.md",
     "reviewed_on": "2026-10-26"
   },
   {
     "id": "19-sales-playbook",
-    "title": "内部顾问分配与跟进示例",
+    "title": "内部顾问分配与跟进规范",
     "category": "内部运营",
     "visibility": "internal",
     "status": "published",
-    "is_demo": true,
+    "is_demo": false,
     "source_url": null,
     "filename": "19-sales-playbook.md",
     "reviewed_on": "2026-10-26"

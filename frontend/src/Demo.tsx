@@ -24,6 +24,7 @@ export function Demo() {
       const script = document.createElement("script");
       script.src = "/widget.js";
       script.id = "zhixing-widget-loader";
+      script.dataset.previewMode = "1";
       document.body.appendChild(script);
     }
   }, []);
@@ -32,9 +33,6 @@ export function Demo() {
   }
   return (
     <div className="demo-site">
-      <div className="demo-topnotice">
-        页面内容为示例，机构及课程信息不构成实际服务或报价。
-      </div>
       <header className="demo-nav">
         <a href="/demo" className="demo-brand">
           <GraduationCap size={29} />

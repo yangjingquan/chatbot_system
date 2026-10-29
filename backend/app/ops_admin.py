@@ -121,11 +121,11 @@ def test_email(user: Admin = Depends(require('settings.write')), db: Session = D
     existing = db.scalar(select(Alert).where(Alert.tenant_id==user.tenant_id, Alert.code=='smtp_test',
                                               Alert.status=='open', Alert.notify_state.in_(['pending','sending','failed'])))
     if existing:
-        raise HTTPException(409, '已有测试邮件待发送，请查看告警列表')
+        raise HTTPException(409, '已有渠道验证邮件待发送，请查看告警列表')
     row = Alert(tenant_id=user.tenant_id,code='smtp_test',severity='info',status='open',
-                title='告警邮件测试',message='这是一封测试邮件，用于验证告警通知渠道。',notify_state='pending')
+                title='告警通知渠道验证',message='此邮件用于确认告警通知收件配置可正常接收。',notify_state='pending')
     db.add(row);db.flush()
-    _record(db,user,'发送告警测试邮件',row.id)
+    _record(db,user,'发送告警渠道验证邮件',row.id)
     db.commit()
     return {'id':row.id,'state':row.notify_state}
 

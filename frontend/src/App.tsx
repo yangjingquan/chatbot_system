@@ -159,7 +159,7 @@ export function App() {
   const [user, setUser] = useState<any>(null);
   const [checking, setChecking] = useState(true);
   const [mobile, setMobile] = useState(false);
-  const [includeDemo, setIncludeDemo] = useState(true);
+  const includeDemo = false;
   const [version, setVersion] = useState(0);
   const config = useResource<any>("/admin/settings", user ? version : -1);
   const location = useLocation();
@@ -206,19 +206,6 @@ export function App() {
               <small>培训服务工作台</small>
             </div>
             <ChevronRight size={14} />
-          </div>
-          <div className="sidebar-data-filter">
-            <label
-              className="toggle-label"
-              title="示例记录与实际业务数据分开统计"
-            >
-              <input
-                type="checkbox"
-                checked={includeDemo}
-                onChange={(e) => setIncludeDemo(e.target.checked)}
-              />
-              包含示例记录
-            </label>
           </div>
           <nav aria-label="主导航">
             {navigation

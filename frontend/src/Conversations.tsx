@@ -92,7 +92,6 @@ export function MessageBubble({
                   版本 {s.version}
                   {s.exam_year ? ` · ${s.exam_year}年度` : ""}
                   {s.region ? ` · ${s.region}` : ""}
-                  {s.is_demo ? " · 示例资料" : ""}
                 </small>
                 <p>{s.text}</p>
               </div>
@@ -337,10 +336,7 @@ export function Conversations({
                 <p>
                   {v.last_message_role === "assistant"
                     ? plainAssistantText(
-                        messageCopy(
-                          v.last_message || "",
-                          v.is_demo ? "sample" : undefined,
-                        ),
+                        messageCopy(v.last_message || ""),
                       )
                     : v.last_message}
                 </p>
@@ -363,7 +359,6 @@ export function Conversations({
                       : ""}
                   </Badge>
                 </div>
-                {v.is_demo && <small className="sample-label">示例会话</small>}
               </button>
             ))
           ) : (
@@ -390,7 +385,6 @@ export function Conversations({
                 <div>
                   <h2>
                     {detail.visitor_name}{" "}
-                    {detail.is_demo && <Badge tone="muted">示例</Badge>}
                   </h2>
                   <p>
                     {sourcePageCopy(detail.source_page)} ·{" "}

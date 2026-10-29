@@ -465,7 +465,6 @@ export function Knowledge({
                               <strong>{d.title}</strong>
                               <small>
                                 {d.category}
-                                {d.is_demo ? " · 示例资料" : ""}
                               </small>
                             </span>
                           </button>

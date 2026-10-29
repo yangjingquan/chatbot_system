@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api, date, useResource } from "./api";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
 import { Filters, Pager, usePaged } from "./lists";
-import { exampleBatchCopy } from "./displayCopy";
+import { batchDisplayName } from "./displayCopy";
 export function Todos({
   includeDemo,
   version,
@@ -93,8 +93,7 @@ export function Todos({
                           </Link>
                           <small className="visibility">
                             {l.course_name} ·{" "}
-                            {exampleBatchCopy(l.batch_name, l.is_demo)}
-                            {l.is_demo ? "（示例）" : ""}
+                            {batchDisplayName(l.batch_name)}
                           </small>
                         </>
                       ) : (

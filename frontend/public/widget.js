@@ -4,7 +4,8 @@
   var source = document.currentScript;
   if (!source) return;
   var origin = new URL(source.src).origin;
-  var storageKey = "zhixing_support_" + origin;
+  var previewMode = source.getAttribute("data-preview-mode") === "1";
+  var storageKey = "zhixing_support_" + origin + (previewMode ? "_preview" : "");
   var root = document.createElement("div");
   root.id = "zhixing-support-widget";
   var shadow = root.attachShadow({ mode: "open" });
@@ -27,7 +28,10 @@
       frame = document.createElement("iframe");
       frame.title = "知行智能客服";
       frame.src =
-        origin + "/chat?parentOrigin=" + encodeURIComponent(location.origin);
+        origin +
+        "/chat?parentOrigin=" +
+        encodeURIComponent(location.origin) +
+        (previewMode ? "&previewMode=1" : "");
       frame.setAttribute(
         "sandbox",
         "allow-scripts allow-same-origin allow-forms",

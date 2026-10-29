@@ -298,13 +298,9 @@ export function Dashboard({
                   <div>
                     <strong>
                       {v.visitor_name}
-                      {v.is_demo && <Badge tone="muted">示例</Badge>}
                     </strong>
                     <p>
-                      {messageCopy(
-                        v.last_message || "",
-                        v.is_demo ? "sample" : undefined,
-                      )}
+                      {messageCopy(v.last_message || "")}
                     </p>
                   </div>
                   <span className="recent-time">
@@ -560,7 +556,7 @@ export function Analytics({
         </section>
       </div>
       <p className="footnote">
-        统计说明：关闭“包含示例记录”后排除示例数据。各项指标按当前筛选范围统计；规则评分不等于成交概率，成交需如实回填。
+        各项指标按当前筛选范围统计；规则评分不等于成交概率，成交需如实回填。
       </p>
     </>
   );

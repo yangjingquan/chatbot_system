@@ -115,7 +115,7 @@ def get_settings(user: Admin = Depends(require('settings.read')), db: Session = 
         public['privacy_notice']=DEFAULT_PRIVACY_NOTICE
     return {**public,
             'model_configured': bool(settings().deepseek_api_key), 'model':settings().deepseek_model,
-            'provider':'DeepSeek', 'retrieval':retrieval_status(), 'demo_notice':'机构、课程及种子会话均为演示资料'}
+            'provider':'DeepSeek', 'retrieval':retrieval_status()}
 
 class ConfigPatch(BaseModel):
     company_name: str | None = Field(None,min_length=1,max_length=80)
@@ -168,7 +168,7 @@ def mark_demo(sid: str, user: Admin = Depends(require('settings.write')), db: Se
     conv.is_demo=True
     lead=db.scalar(select(Lead).where(Lead.conversation_id==sid))
     if lead: lead.is_demo=True
-    record(db,user,'标记测试记录',sid)
+    record(db,user,'移入隔离数据',sid)
     db.commit()
     return {'is_demo':True}
 
@@ -256,12 +256,12 @@ def export_leads(filters:BusinessFilters=Depends(),user:Admin=Depends(require('l
     entries=[lead_data(l) for l in db.scalars(lead_query(db,user,filters).order_by(Lead.created_at.desc(),Lead.id.desc()))]
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(['姓名','联系方式','核验状态','联系许可','意向等级','跟进阶段','负责人','演示数据'])
+    writer.writerow(['姓名','联系方式','核验状态','联系许可','意向等级','跟进阶段','负责人'])
     def safe(v):
         s = str(v)
         return "'" + s if s.startswith(('=','+','-','@','\t','\r')) else s
     for row in entries:
-        writer.writerow([safe(row['name']),safe(row['contact']),'已核验' if row['contact_verified'] else '待核验','可就本次咨询联系' if row['contact_allowed'] else '已停止联系',row['level'],row['stage'],safe(row['owner']),row['is_demo']])
+        writer.writerow([safe(row['name']),safe(row['contact']),'已核验' if row['contact_verified'] else '待核验','可就本次咨询联系' if row['contact_allowed'] else '已停止联系',row['level'],row['stage'],safe(row['owner'])])
     record(db,user,'导出线索',str(len(entries)))
     db.commit()
     return StreamingResponse(iter(['\ufeff'+buffer.getvalue()]),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="leads.csv"'})

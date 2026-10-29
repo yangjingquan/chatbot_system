@@ -6,7 +6,7 @@ const seedMessage =
 
 export function welcomeCopy(value: string | undefined): string {
   if (value === seedWelcome)
-    return "您好，我是知行学习顾问。您正在准备哪一类考试？我可以帮您了解课程、学习方式或预约试听。部分资料为示例，课程与价格请以机构实际公布的信息为准。";
+    return "您好，我是知行学习顾问。您正在准备哪一类考试？我可以帮您了解课程、学习方式或预约试听。课程与价格以机构公布的信息为准。";
   return value || "正在连接企业知识库…";
 }
 
@@ -16,20 +16,20 @@ export function sourcePageCopy(value: string): string {
 
 export function messageCopy(content: string, mode?: string): string {
   return mode === "sample" && content === seedMessage
-    ? "这是一条示例对话，展示咨询管理的基本流程。"
+    ? "顾问可在此继续查看和跟进访客咨询。"
     : content;
 }
 
-export function exampleBatchCopy(name: string, isExample: boolean): string {
-  return isExample && name === "演示基础班" ? "基础班" : name;
+export function batchDisplayName(name: string): string {
+  return name === "演示基础班" ? "基础班" : name;
 }
 
 export function systemMessageCopy(value: string): string {
   const messages: Record<string, string> = {
     "模型鉴权失败，请管理员检查本地 API Key。":
       "模型鉴权失败，请管理员检查服务端 API Key。",
-    演示记录与真实业务记录不能关联: "示例记录与业务记录不能关联",
-    演示档案与真实业务档案不能合并: "示例档案与业务档案不能合并",
+    演示记录与真实业务记录不能关联: "不同数据范围的记录不能关联",
+    演示档案与真实业务档案不能合并: "不同数据范围的档案不能合并",
   };
   return messages[value] || value;
 }

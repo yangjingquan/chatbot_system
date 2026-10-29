@@ -5,7 +5,7 @@ import { api } from "./api";
 import { useAccess } from "./auth";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
 import { exams, isoTime, localTime, Pager, usePaged } from "./lists";
-import { exampleBatchCopy } from "./displayCopy";
+import { batchDisplayName } from "./displayCopy";
 
 const blankCourse = () => ({
   name: "",
@@ -288,7 +288,6 @@ export function Courses({ version }: { version: number }) {
                         >
                           <strong>{c.name}</strong>
                         </button>
-                        {c.is_demo && <Badge tone="muted">示例</Badge>}
                       </td>
                       <td>
                         {c.exam_type} · {c.class_type}
@@ -433,8 +432,7 @@ export function Courses({ version }: { version: number }) {
                     onClick={() => editBatch(b)}
                   >
                     <strong>
-                      {exampleBatchCopy(b.name, edit.is_demo)}
-                      {edit.is_demo ? "（示例）" : ""} ·{" "}
+                      {batchDisplayName(b.name)} ·{" "}
                       {saleLabels[b.sale_status]}
                     </strong>
                     <small>

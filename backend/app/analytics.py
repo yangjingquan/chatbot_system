@@ -19,7 +19,7 @@ SHANGHAI = ZoneInfo('Asia/Shanghai')
 
 # Stable definitions exposed to API clients and docs. Keep in sync with docs/统计口径与系统性能.md.
 METRIC_DEFINITIONS = {
-    'conversations': '有效咨询：筛选范围内至少发过一条用户消息，或提交过联系请求的会话；默认排除演示。仅打开面板不计。',
+    'conversations': '有效咨询：筛选范围内至少发过一条用户消息，或提交过联系请求的会话；默认不计入本站预览产生的记录。仅打开面板不计。',
     'leads': '留资线索：筛选范围内自愿提交联系方式形成的线索条数（与线索列表 total、导出行数一致）。',
     'contacted_conversations': '留资会话：有效咨询中已存在线索记录的会话数；留资率 = 本值 ÷ 有效咨询。',
     'trials': '试听：筛选范围内有效咨询关联的试听申请条数（含各状态）。',
