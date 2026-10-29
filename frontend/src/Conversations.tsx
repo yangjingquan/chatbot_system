@@ -57,7 +57,13 @@ export function MessageBubble({
       <div className="message-body">
         <div className="message-meta">
           <strong>
-            {user ? "访客" : message.role === "agent" ? "人工顾问" : "学习顾问"}
+            {user
+              ? "访客"
+              : message.role === "agent"
+                ? "人工顾问"
+                : message.mode === "trial_update"
+                  ? "预约通知"
+                  : "学习顾问"}
           </strong>
           <small>
             {message.created_at ? date(message.created_at, true) : ""}

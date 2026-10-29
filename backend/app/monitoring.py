@@ -357,7 +357,12 @@ def _upsert_alert(db: Session, tenant_id: str, code: str, message: str, evidence
         db.add(row)
         db.flush()
         return row
-    if existing and existing.status == 'open':
+    if existing and existing.status in ('open', 'acked'):
+        if existing.notify_state == 'sent':
+            existing.notify_event = 'recovery'
+            existing.notify_state = 'pending'
+            existing.notify_next_attempt_at = None
+            existing.notify_last_error = ''
         existing.status = 'resolved'
         existing.resolved_at = now()
         existing.last_seen_at = now()
@@ -367,7 +372,10 @@ def _upsert_alert(db: Session, tenant_id: str, code: str, message: str, evidence
     return existing
 
 
-def evaluate_alerts(db: Session, tenant_id: str = TENANT) -> dict:
+def evaluate_alerts(db: Session, tenant_id: str = TENANT, *, include_latency: bool = True) -> dict:
+    # Serialize evaluators across API and monitor processes to avoid duplicate alerts.
+    if db.bind.dialect.name == 'postgresql':
+        db.execute(text('SELECT pg_advisory_xact_lock(72102603)'))
     status = collect_status(db, tenant_id)
     c = status['components']
     raised = []
@@ -390,8 +398,9 @@ def evaluate_alerts(db: Session, tenant_id: str = TENANT) -> dict:
     bump('model_errors', model['status'] == 'fail',
          f"近 1 小时错误 {model['errors_1h']}/{model['calls_1h']}，超时 {model['timeouts_1h']}", model)
     lat = c['latency']
-    bump('latency_high', lat.get('status') == 'fail',
-         f"p95={lat.get('p95_ms')}ms（样本 {lat.get('count')}）", lat)
+    if include_latency:
+        bump('latency_high', lat.get('status') == 'fail',
+             f"p95={lat.get('p95_ms')}ms（样本 {lat.get('count')}）", lat)
     disk = c['disk']
     bump('disk_low', disk['status'] == 'fail',
          f"磁盘已用 {disk.get('used_pct')}%，剩余 {disk.get('free_gb')} GB", disk)
@@ -401,14 +410,6 @@ def evaluate_alerts(db: Session, tenant_id: str = TENANT) -> dict:
     schema = c.get('schema') or {}
     bump('schema_lag', schema.get('status') == 'fail',
          f"schema applied={schema.get('applied')} expected={schema.get('expected')}", schema)
-
-    for row in raised:
-        if row.notify_state == 'pending':
-            result = dispatch_alert(db, row)
-            row.notify_state = result['state']
-            evidence = dict(row.evidence or {})
-            evidence['notify'] = result
-            row.evidence = evidence
 
     db.flush()
     open_count = db.scalar(
@@ -422,12 +423,18 @@ def notify_config(db: Session, tenant_id: str = TENANT) -> dict:
     company = db.get(Company, tenant_id)
     cfg = (company.config if company else {}) or {}
     raw = cfg.get('_ops_notify') or {}
+    heartbeat = db.get(OpsHeartbeat, 'alert-monitor')
+    monitor = None
+    if heartbeat and heartbeat.tenant_id == tenant_id:
+        monitor = {'last_seen_at': _iso(heartbeat.updated_at),
+                   'smtp_configured': bool((heartbeat.detail or {}).get('smtp_configured'))}
     return {
         'enabled': bool(raw.get('enabled')),
         'channel': raw.get('channel') or 'none',  # none | email | webhook
         'email_to': raw.get('email_to') or '',
         'webhook_url': raw.get('webhook_url') or '',
-        'note': '默认不外发。启用前请确认收件邮箱或企业 Webhook，并核对是否允许出站。',
+        'note': '邮件由独立巡检进程发送；SMTP 连接及授权码在服务器环境变量配置。',
+        'monitor': monitor,
     }
 
 
@@ -440,25 +447,11 @@ def save_notify_config(db: Session, tenant_id: str, data: dict) -> dict:
         'webhook_url': (data.get('webhook_url') or '')[:500],
     }
     company.config = {**company.config, '_ops_notify': clean}
+    # Reconsider legacy stub records and alerts skipped before email was enabled.
+    if clean['enabled'] and clean['channel']=='email':
+        for row in db.scalars(select(Alert).where(Alert.tenant_id==tenant_id,Alert.status.in_(['open','acked']),Alert.notify_state.in_(['skipped','queued']))):
+            row.notify_state='pending';row.notify_next_attempt_at=None
     return notify_config(db, tenant_id)
-
-
-def dispatch_alert(db: Session, alert: Alert) -> dict:
-    """Reserve email / webhook channel. Default: skip outbound delivery."""
-    cfg = notify_config(db, alert.tenant_id)
-    if not cfg['enabled'] or cfg['channel'] in ('', 'none'):
-        return {
-            'state': 'skipped',
-            'reason': '通知渠道未启用（需管理员在运维告警配置中打开）',
-            'channel': cfg['channel'],
-        }
-    # Intentionally do not send yet: keep a safe stub so production can wire SMTP/webhook later.
-    return {
-        'state': 'queued',
-        'reason': '渠道已配置，本版仅登记待发送，不自动外发（需用户配置并验收渠道）',
-        'channel': cfg['channel'],
-        'target': redact_log(cfg.get('email_to') or cfg.get('webhook_url') or '', 80),
-    }
 
 
 def alert_data(row: Alert) -> dict:
@@ -475,6 +468,11 @@ def alert_data(row: Alert) -> dict:
         'resolved_at': _iso(row.resolved_at),
         'ack_by': row.ack_by,
         'notify_state': row.notify_state,
+        'notify_event': row.notify_event,
+        'notify_attempts': row.notify_attempts,
+        'notify_last_error': row.notify_last_error,
+        'notify_sent_at': _iso(row.notify_sent_at),
+        'notify_next_attempt_at': _iso(row.notify_next_attempt_at),
     }
 
 

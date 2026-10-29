@@ -51,7 +51,7 @@ export function Monitoring({ version }: { version: number }) {
     <>
       <PageTitle
         title="运行监控与告警"
-        description="巡检 API、数据库、Redis、Worker、任务积压、模型错误、耗时、磁盘与备份结果；通知渠道默认关闭，需人工配置后才会登记外发。"
+        description="巡检数据库、Redis、Worker、任务、模型、耗时、磁盘与备份；邮件通知默认关闭，配置并启用后自动发送。"
       />
       <div className="quality-tabs" role="tablist" aria-label="运维监控">
         {[
@@ -303,7 +303,28 @@ function AlertsPanel({ version }: { version: number }) {
                       {a.last_seen_at ? date(a.last_seen_at) : "-"}
                     </div>
                   </td>
-                  <td>{a.notify_state}</td>
+                  <td>
+                    {a.notify_event === "recovery" ? "恢复通知：" : ""}
+                    {(
+                      {
+                        pending: "待发送",
+                        queued: "待发送",
+                        sending: "发送中",
+                        sent: "邮件服务器已接受",
+                        failed: "发送失败",
+                        skipped: "未启用",
+                      } as Record<string, string>
+                    )[a.notify_state] || a.notify_state}
+                    {a.notify_last_error && (
+                      <div className="muted">{a.notify_last_error}</div>
+                    )}
+                    {a.notify_state === "failed" &&
+                      a.notify_next_attempt_at && (
+                        <small className="muted">
+                          下次重试：{date(a.notify_next_attempt_at, true)}
+                        </small>
+                      )}
+                  </td>
                   <td>
                     {a.status !== "resolved" && (
                       <div
@@ -360,7 +381,19 @@ function NotifyPanel({ version }: { version: number }) {
         }),
       });
       setForm(r);
-      toast("通知配置已保存（默认仍不自动外发）");
+      cfg.reload();
+      toast("通知配置已保存");
+    } catch (err: any) {
+      toast(err.message, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function sendTest() {
+    setBusy(true);
+    try {
+      await api("/admin/ops/notify/test", { method: "POST" });
+      toast("测试邮件已排队，请在告警列表中查看发送状态");
     } catch (err: any) {
       toast(err.message, true);
     } finally {
@@ -370,19 +403,30 @@ function NotifyPanel({ version }: { version: number }) {
   if (cfg.error) return <ErrorBox text={cfg.error} />;
   if (!form) return <Loading />;
   return (
-    <section className="panel">
-      <form onSubmit={save} className="stack-form">
-        <p className="muted">
-          <Server size={14} /> {form.note}
-          真实邮件/企业微信等外发需机构自行配置 SMTP 或 Webhook 并完成验收。
-        </p>
+    <section className="panel notify-panel" aria-labelledby="notify-title">
+      <div className="notify-heading">
+        <h2 id="notify-title">通知设置</h2>
+        <p>配置告警接收方式，服务异常时及时通知负责人。</p>
+      </div>
+      <div className="notify-service-status">
+        <Server size={17} aria-hidden="true" />
+        <div>
+          <p>{form.note}</p>
+          <p>
+            {form.monitor
+              ? `巡检进程最近运行：${date(form.monitor.last_seen_at, true)}；SMTP 参数${form.monitor.smtp_configured ? "已填写" : "未填写完整"}。`
+              : "尚未收到巡检进程心跳，请检查 alert-monitor 服务。"}
+          </p>
+        </div>
+      </div>
+      <form onSubmit={save} className="stack-form notify-form">
         <label className="toggle-label">
           <input
             type="checkbox"
             checked={!!form.enabled}
             onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
           />
-          启用通知登记（本版仅登记待发送，不强制外发）
+          启用告警通知
         </label>
         <label>
           渠道
@@ -391,29 +435,59 @@ function NotifyPanel({ version }: { version: number }) {
             onValueChange={(value) => setForm({ ...form, channel: value })}
           >
             <option value="none">不使用</option>
-            <option value="email">邮件（预留）</option>
+            <option value="email">邮件</option>
             <option value="webhook">Webhook（预留）</option>
           </Select>
         </label>
-        <label>
-          收件邮箱
-          <input
-            value={form.email_to || ""}
-            onChange={(e) => setForm({ ...form, email_to: e.target.value })}
-            placeholder="ops@example.com"
-          />
-        </label>
-        <label>
-          Webhook URL
-          <input
-            value={form.webhook_url || ""}
-            onChange={(e) => setForm({ ...form, webhook_url: e.target.value })}
-            placeholder="https://..."
-          />
-        </label>
-        <button className="button" disabled={busy}>
-          {busy ? "保存中…" : "保存通知配置"}
-        </button>
+        {form.channel === "email" && (
+          <label>
+            收件邮箱
+            <input
+              type="email"
+              value={form.email_to || ""}
+              onChange={(e) => setForm({ ...form, email_to: e.target.value })}
+              placeholder="ops@example.com"
+            />
+            <small>多人接收可填写邮件组地址。发送失败后系统会自动重试。</small>
+          </label>
+        )}
+        {form.channel === "webhook" && (
+          <label>
+            Webhook URL
+            <input
+              value={form.webhook_url || ""}
+              onChange={(e) =>
+                setForm({ ...form, webhook_url: e.target.value })
+              }
+              placeholder="https://..."
+            />
+            <small>Webhook 暂未接入，保存地址后不会自动发送。</small>
+          </label>
+        )}
+        <div className="notify-actions">
+          <button className="button" disabled={busy}>
+            {busy ? "保存中…" : "保存通知配置"}
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={sendTest}
+            disabled={
+              busy ||
+              !cfg.data?.enabled ||
+              cfg.data?.channel !== "email" ||
+              !cfg.data?.email_to ||
+              form.enabled !== cfg.data.enabled ||
+              form.channel !== cfg.data.channel ||
+              form.email_to !== cfg.data.email_to
+            }
+          >
+            发送测试邮件
+          </button>
+        </div>
+        <p className="notify-hint">
+          先保存设置，再发送测试邮件。测试成功后可在告警列表的“全部”或“已恢复”中查看。
+        </p>
       </form>
     </section>
   );

@@ -343,7 +343,7 @@ def overview(filters:BusinessFilters=Depends(),user:Admin=Depends(require('analy
         knowledge_gap_rows, message_usage, first_agent_reply_latency, document_counts,
     )
     from .privacy import redact_text
-    from .students import todo_query, student_query
+    from .students import todo_query, todo_data as followup_todo_data, student_query
     from .querying import count
     from .knowledge_maintenance import sync_expiry_todos, list_knowledge_todos, todo_data
     counts = build_overview_counts(db, user, filters)
@@ -366,7 +366,7 @@ def overview(filters:BusinessFilters=Depends(),user:Admin=Depends(require('analy
         'counts': counts,
         'student_count': count(db, student_query(db, user, filters)),
         'todo_count': count(db, tasks),
-        'todos': [lead_data(l) for l in db.scalars(tasks.limit(5))],
+        'todos': [followup_todo_data(db, row) for row in db.execute(tasks.limit(5))],
         'knowledge_todo_count': count(db, knowledge_tasks),
         'knowledge_todos': [todo_data(db, t) for t in db.scalars(knowledge_tasks.limit(5))],
         'expired_documents': doc_stats['expired_documents'],

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .models import (
     Company, Conversation, Message, Lead, FollowUp, Audit, PrivacyRequest,
-    Student, TENANT, now, uid,
+    Student, Trial, TENANT, now, uid,
 )
 
 ANON_NAME = '已匿名'
@@ -50,6 +50,10 @@ def mask_contact(value: str | None) -> str:
 def withdraw_lead_contact(db: Session, lead: Lead, *, actor_name: str = '系统', note: str = ''):
     lead.contact_allowed = False
     lead.next_followup_at = None
+    for trial in db.scalars(select(Trial).where(Trial.conversation_id == lead.conversation_id, Trial.todo_due_at.is_not(None))):
+        trial.todo_due_at = None
+        trial.todo_kind = ''
+        trial.version += 1
     db.add(Audit(tenant_id=lead.tenant_id, actor=actor_name, action='撤回联系许可',
                  target=lead.id, details=(note or '访客或员工撤回联系许可')[:1000]))
 
@@ -73,6 +77,10 @@ def anonymize_lead(db: Session, lead: Lead, *, wipe_contact: bool = True):
     lead.tags = []
     lead.evidence = []
     lead.next_followup_at = None
+    for trial in db.scalars(select(Trial).where(Trial.conversation_id == lead.conversation_id, Trial.todo_due_at.is_not(None))):
+        trial.todo_due_at = None
+        trial.todo_kind = ''
+        trial.version += 1
     lead.purpose = '已清理'
     for item in db.scalars(select(FollowUp).where(FollowUp.lead_id == lead.id)).all():
         item.content = ANON_MESSAGE
@@ -153,8 +161,7 @@ def reapply_completed_privacy(db: Session, tenant_id: str = TENANT) -> int:
         lead = db.get(Lead, req.lead_id) if req.lead_id else None
         conv = db.get(Conversation, req.conversation_id) if req.conversation_id else None
         if req.kind == 'withdraw_contact' and lead and lead.contact_allowed:
-            lead.contact_allowed = False
-            lead.next_followup_at = None
+            withdraw_lead_contact(db, lead, actor_name='系统', note='恢复后重放撤回联系许可')
             count += 1
         if req.kind in ('anonymize', 'delete'):
             if lead and lead.contact != ANON_CONTACT:

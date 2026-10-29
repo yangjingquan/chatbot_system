@@ -1,7 +1,7 @@
 import { Select } from "./Select";
 import { exampleBatchCopy } from "./displayCopy";
-import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, date, useResource } from "./api";
 import { PageTitle, ErrorBox, Loading, Empty, Badge, useToast } from "./ui";
 import { connectReceptionSocket, pollMs } from "./receptionSocket";
@@ -18,10 +18,21 @@ const localTime = (v: string) => {
     .toISOString()
     .slice(0, 16);
 };
+const trialReceiptTime = (value: string) =>
+  new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 export function ReceptionStatus() {
-  const [status, setStatus] = useState("offline"),
+  const [status, setStatus] = useState(""),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [presenceBusy, setPresenceBusy] = useState(false);
+  const statusRevision = useRef(0);
   const counts = useResource<any>("/admin/reception-summary");
   const toast = useToast();
   const [wsLive, setWsLive] = useState(false);
@@ -33,13 +44,20 @@ export function ReceptionStatus() {
     return () => stop();
   }, []);
   useEffect(() => {
-    const beat = () =>
-      api("/admin/presence", {
-        method: "PUT",
-        body: JSON.stringify({ status }),
-      })
-        .then(() => setError(""))
-        .catch((e) => setError(e.message));
+    let active = true;
+    const beat = () => {
+      const revision = statusRevision.current;
+      api("/admin/presence/heartbeat", { method: "POST" })
+        .then((result) => {
+          if (active && revision === statusRevision.current) {
+            setStatus(result.status);
+            setError("");
+          }
+        })
+        .catch((e) => {
+          if (active) setError(e.message);
+        });
+    };
     beat();
     const timer = setInterval(
       () => {
@@ -48,8 +66,27 @@ export function ReceptionStatus() {
       },
       pollMs(wsLive, 60000, 15000),
     );
-    return () => clearInterval(timer);
-  }, [status, wsLive]);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [wsLive]);
+  async function changePresence(value: string) {
+    statusRevision.current++;
+    setPresenceBusy(true);
+    try {
+      const result = await api("/admin/presence", {
+        method: "PUT",
+        body: JSON.stringify({ status: value }),
+      });
+      setStatus(result.status);
+      setError("");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setPresenceBusy(false);
+    }
+  }
   async function claimNext() {
     setBusy(true);
     try {
@@ -76,8 +113,12 @@ export function ReceptionStatus() {
         <Select
           aria-label="我的在线状态"
           value={status}
-          onValueChange={(value) => setStatus(value)}
+          onValueChange={changePresence}
+          disabled={!status || presenceBusy}
         >
+          <option value="" disabled>
+            正在读取
+          </option>
           <option value="online">在线</option>
           <option value="away">暂离</option>
           <option value="offline">离线</option>
@@ -107,6 +148,8 @@ export function Trials({
   version: number;
 }) {
   const toast = useToast();
+  const [searchParams] = useSearchParams();
+  const selectedId = searchParams.get("trial_id");
   const [status, setStatus] = useState(""),
     [page, setPage] = useState(1),
     [selected, setSelected] = useState<any>(null),
@@ -114,6 +157,9 @@ export function Trials({
     [time, setTime] = useState(""),
     [note, setNote] = useState(""),
     [reason, setReason] = useState(""),
+    [confirmEarly, setConfirmEarly] = useState(false),
+    [earlyReason, setEarlyReason] = useState(""),
+    [correctionReason, setCorrectionReason] = useState(""),
     [busy, setBusy] = useState(false);
   const list = useResource<any>(
       `/admin/trials?include_demo=${includeDemo}&status=${status}&page=${page}&page_size=20`,
@@ -124,6 +170,9 @@ export function Trials({
     setPage(1);
     setSelected(null);
   }, [status, includeDemo]);
+  useEffect(() => {
+    if (selectedId) choose({ id: selectedId });
+  }, [selectedId]);
   async function choose(t: any) {
     try {
       const detail = await api("/admin/trials/" + t.id);
@@ -132,6 +181,9 @@ export function Trials({
       setTime(localTime(detail.scheduled_at || detail.requested_at));
       setNote(detail.note || "");
       setReason(detail.reason || "");
+      setConfirmEarly(false);
+      setEarlyReason("");
+      setCorrectionReason("");
     } catch (e: any) {
       toast(e.message, true);
     }
@@ -152,6 +204,9 @@ export function Trials({
           scheduled_at: time ? new Date(time).toISOString() : null,
           note,
           reason: reason.trim(),
+          confirm_early: confirmEarly,
+          early_reason: earlyReason.trim(),
+          correction_reason: correctionReason.trim(),
         }),
       });
       setSelected(detail);
@@ -159,6 +214,9 @@ export function Trials({
       setTime(localTime(detail.scheduled_at || detail.requested_at));
       setNote(detail.note || "");
       setReason(detail.reason || "");
+      setConfirmEarly(false);
+      setEarlyReason("");
+      setCorrectionReason("");
       list.reload();
       toast("试听状态已更新");
     } catch (e: any) {
@@ -297,8 +355,11 @@ export function Trials({
                 学员：{selected.student_name || selected.student_id}
               </Link>
             )}
-            {selected.next_followup_at && (
-              <span>下次跟进 {date(selected.next_followup_at, true)}</span>
+            {selected.todo_due_at && (
+              <span>
+                本次试听待办：{selected.todo_kind} ·{" "}
+                {date(selected.todo_due_at, true)}
+              </span>
             )}
           </div>
           {selected.auto_todo_rule && (
@@ -355,6 +416,40 @@ export function Trials({
               placeholder="取消或标记未参加时必填"
             />
           </label>
+          {selected.status === "confirmed" &&
+            selected.scheduled_at &&
+            new Date(selected.scheduled_at) > new Date() && (
+              <div className="contact-form">
+                <p>确认时间尚未到。如果试听已提前进行，请核实后说明原因。</p>
+                <label className="checkbox-line">
+                  <input
+                    type="checkbox"
+                    checked={confirmEarly}
+                    onChange={(e) => setConfirmEarly(e.target.checked)}
+                  />{" "}
+                  我确认试听已提前进行
+                </label>
+                <label>
+                  提前参加原因
+                  <input
+                    value={earlyReason}
+                    onChange={(e) => setEarlyReason(e.target.value)}
+                    maxLength={1000}
+                  />
+                </label>
+              </div>
+            )}
+          {["attended", "no_show", "cancelled"].includes(selected.status) && (
+            <label>
+              状态更正原因
+              <input
+                value={correctionReason}
+                onChange={(e) => setCorrectionReason(e.target.value)}
+                maxLength={1000}
+                placeholder="更正为待确认时必填"
+              />
+            </label>
+          )}
           <div className="actions">
             {["pending", "confirmed"].includes(selected.status) && (
               <>
@@ -369,7 +464,12 @@ export function Trials({
                   <>
                     <button
                       className="button secondary"
-                      disabled={busy}
+                      disabled={
+                        busy ||
+                        (!!selected.scheduled_at &&
+                          new Date(selected.scheduled_at) > new Date() &&
+                          (!confirmEarly || !earlyReason.trim()))
+                      }
                       onClick={() => change("attended")}
                     >
                       记录已参加
@@ -391,6 +491,15 @@ export function Trials({
                   取消预约
                 </button>
               </>
+            )}
+            {["attended", "no_show", "cancelled"].includes(selected.status) && (
+              <button
+                className="button secondary"
+                disabled={busy || !correctionReason.trim()}
+                onClick={() => change("pending")}
+              >
+                更正为待确认
+              </button>
             )}
           </div>
           {!!selected.followups?.length && (
@@ -426,7 +535,13 @@ export function WidgetTrial({
     [time, setTime] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
+    [receipt, setReceipt] = useState<any>(null),
+    [changeNotice, setChangeNotice] = useState(""),
+    [editingTrial, setEditingTrial] = useState(""),
+    [cancelTrial, setCancelTrial] = useState(""),
+    [changeTime, setChangeTime] = useState(""),
     [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  const submitting = useRef(false);
   const headers = { Authorization: "Bearer " + credential.token };
   const batches = useResource<any[]>("/widget/trial-batches");
   const [trials, setTrials] = useState<any[]>([]);
@@ -449,10 +564,12 @@ export function WidgetTrial({
   }, [credential.id]);
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setError("");
     try {
-      await api(`/widget/sessions/${credential.id}/trials`, {
+      const result = await api(`/widget/sessions/${credential.id}/trials`, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -461,14 +578,68 @@ export function WidgetTrial({
           client_id: requestId,
         }),
       });
-      setTrials(
-        await api(`/widget/sessions/${credential.id}/trials`, { headers }),
-      );
+      setTrials((previous) => [
+        result,
+        ...previous.filter((t) => t.id !== result.id),
+      ]);
+      setReceipt(result);
+      setChangeNotice("");
       setOpen(false);
+      setBatch("");
+      setTime("");
       setRequestId(crypto.randomUUID());
     } catch (e: any) {
-      setError(e.message);
+      setError(
+        e.status
+          ? e.message
+          : "提交结果暂时无法确认，请检查网络后重试。重复提交不会产生重复申请。",
+      );
     } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
+  async function changeTrial(trial: any, action: "cancel" | "reschedule") {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api(
+        `/widget/sessions/${credential.id}/trials/${trial.id}`,
+        {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            version: trial.version,
+            action,
+            ...(action === "reschedule"
+              ? { requested_at: new Date(changeTime).toISOString() }
+              : {}),
+          }),
+        },
+      );
+      setTrials((previous) =>
+        previous.map((t) => (t.id === result.id ? result : t)),
+      );
+      setReceipt(null);
+      setEditingTrial("");
+      setCancelTrial("");
+      setChangeTime("");
+      setOpen(false);
+      setChangeNotice(
+        action === "cancel"
+          ? "试听申请已取消。"
+          : `改期申请已提交，意向时间：${trialReceiptTime(result.requested_at)}（北京时间）。顾问核实后确认。`,
+      );
+    } catch (e: any) {
+      setError(
+        e.status
+          ? e.message
+          : "操作结果暂时无法确认，请检查网络并重新查看预约。",
+      );
+    } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -480,10 +651,39 @@ export function WidgetTrial({
       >
         申请试听 / 查看预约
       </button>
+      {receipt && (
+        <div className="trial-receipt" role="status" aria-live="polite">
+          <strong>
+            {receipt.already_exists ? "已有相同的试听申请" : "试听申请已提交"}
+          </strong>
+          <p>
+            {receipt.course_name} ·{" "}
+            {exampleBatchCopy(receipt.batch_name, receipt.is_demo)}
+            {receipt.is_demo ? "（示例）" : ""}
+          </p>
+          <p>意向时间：{trialReceiptTime(receipt.requested_at)}（北京时间）</p>
+          {receipt.scheduled_at && (
+            <p>
+              确认时间：{trialReceiptTime(receipt.scheduled_at)}（北京时间）
+            </p>
+          )}
+          <p>
+            当前状态：{trialLabels[receipt.status] || receipt.status}
+            {receipt.status === "pending" ? "，顾问核实后确认。" : "。"}
+          </p>
+        </div>
+      )}
+      {changeNotice && (
+        <div className="trial-receipt" role="status">
+          {changeNotice}
+        </div>
+      )}
       {open && (
         <form className="contact-form" onSubmit={submit}>
           <h3>申请试听</h3>
-          <p>提交意向时间后，由顾问核实并确认。</p>
+          <p>
+            提交意向时间后，由顾问核实并确认。预约变化会在本窗口通知；离开后可重新打开查看，暂不发送短信或邮件。
+          </p>
           {!hasContact ? (
             <button type="button" className="button" onClick={onContact}>
               先留下本次试听联系方式
@@ -495,7 +695,11 @@ export function WidgetTrial({
                 <Select
                   required
                   value={batch}
-                  onValueChange={(value) => setBatch(value)}
+                  onValueChange={(value) => {
+                    setBatch(value);
+                    setRequestId(crypto.randomUUID());
+                  }}
+                  disabled={busy}
                 >
                   <option value="">请选择班次</option>
                   {batches.data?.map((b) => (
@@ -513,7 +717,11 @@ export function WidgetTrial({
                   required
                   type="datetime-local"
                   value={time}
-                  onChange={(e) => setTime(e.target.value)}
+                  onChange={(e) => {
+                    setTime(e.target.value);
+                    setRequestId(crypto.randomUUID());
+                  }}
+                  disabled={busy}
                 />
               </label>
               <button className="button" disabled={busy || !batch || !time}>
@@ -522,14 +730,101 @@ export function WidgetTrial({
             </>
           )}
           {trials.map((t) => (
-            <p key={t.id}>
-              <strong>{trialLabels[t.status]}</strong> · {t.course_name}
-              <br />
-              {t.scheduled_at
-                ? "确认时间：" + date(t.scheduled_at, true)
-                : "意向时间：" + date(t.requested_at, true)}{" "}
-              · {t.advisor_name}
-            </p>
+            <div className="widget-trial-item" key={t.id}>
+              <p>
+                <strong>{trialLabels[t.status]}</strong> · {t.course_name}
+                <br />
+                {t.scheduled_at
+                  ? "确认时间：" + date(t.scheduled_at, true)
+                  : "意向时间：" + date(t.requested_at, true)}{" "}
+                · {t.advisor_name}
+              </p>
+              {["pending", "confirmed"].includes(t.status) && (
+                <>
+                  {editingTrial === t.id && (
+                    <label>
+                      新的意向时间
+                      <input
+                        type="datetime-local"
+                        value={changeTime}
+                        onChange={(e) => setChangeTime(e.target.value)}
+                        disabled={busy}
+                      />
+                    </label>
+                  )}
+                  <div className="actions">
+                    {editingTrial === t.id ? (
+                      <>
+                        <button
+                          type="button"
+                          className="button secondary small"
+                          disabled={busy || !changeTime}
+                          onClick={() => changeTrial(t, "reschedule")}
+                        >
+                          提交改期
+                        </button>
+                        <button
+                          type="button"
+                          className="button secondary small"
+                          disabled={busy}
+                          onClick={() => setEditingTrial("")}
+                        >
+                          收起
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button secondary small"
+                        disabled={busy}
+                        onClick={() => {
+                          setEditingTrial(t.id);
+                          setCancelTrial("");
+                          setChangeTime(
+                            localTime(t.scheduled_at || t.requested_at),
+                          );
+                        }}
+                      >
+                        申请改期
+                      </button>
+                    )}
+                    {cancelTrial === t.id ? (
+                      <>
+                        <span>确认取消这条预约？</span>
+                        <button
+                          type="button"
+                          className="button secondary small"
+                          disabled={busy}
+                          onClick={() => changeTrial(t, "cancel")}
+                        >
+                          确认取消
+                        </button>
+                        <button
+                          type="button"
+                          className="button secondary small"
+                          disabled={busy}
+                          onClick={() => setCancelTrial("")}
+                        >
+                          返回
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button secondary small"
+                        disabled={busy}
+                        onClick={() => {
+                          setCancelTrial(t.id);
+                          setEditingTrial("");
+                        }}
+                      >
+                        取消预约
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           ))}
         </form>
       )}

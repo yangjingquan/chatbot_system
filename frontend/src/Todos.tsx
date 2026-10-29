@@ -1,4 +1,5 @@
 import { Select } from "./Select";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, date, useResource } from "./api";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
@@ -14,16 +15,29 @@ export function Todos({
     r = list.resource,
     owners = useResource<any[]>("/admin/filter-options", version),
     toast = useToast();
-  async function complete(id: string) {
+  const [completing, setCompleting] = useState("");
+  async function complete(todo: any) {
+    if (completing) return;
+    setCompleting(todo.todo_key);
     try {
-      await api("/admin/leads/" + id + "/complete-followup", {
+      const path =
+        todo.todo_type === "trial"
+          ? "/admin/trials/" + todo.trial_id + "/complete-followup"
+          : "/admin/leads/" + todo.id + "/complete-followup";
+      await api(path, {
         method: "POST",
-        body: JSON.stringify({ content: "已完成本次跟进" }),
+        body: JSON.stringify({
+          content: "已完成本次跟进",
+          ...(todo.todo_type === "trial" ? { version: todo.todo_version } : {}),
+        }),
       });
       r.reload();
       toast("跟进待办已完成");
     } catch (e: any) {
       toast(e.message, true);
+      r.reload();
+    } finally {
+      setCompleting("");
     }
   }
   return (
@@ -56,6 +70,7 @@ export function Todos({
               <thead>
                 <tr>
                   <th>咨询人</th>
+                  <th>待办事项</th>
                   <th>下次跟进</th>
                   <th>负责人</th>
                   <th>阶段</th>
@@ -64,10 +79,24 @@ export function Todos({
               </thead>
               <tbody>
                 {r.data.items.map((l) => (
-                  <tr key={l.id}>
+                  <tr key={l.todo_key}>
                     <td>
                       <Link to={"/leads?lead_id=" + l.id}>{l.name}</Link>
                       <small className="visibility">{l.contact}</small>
+                    </td>
+                    <td>
+                      {l.todo_type === "trial" ? (
+                        <>
+                          <Link to={"/trials?trial_id=" + l.trial_id}>
+                            {l.todo_label}
+                          </Link>
+                          <small className="visibility">
+                            {l.course_name} · {l.batch_name}
+                          </small>
+                        </>
+                      ) : (
+                        l.todo_label
+                      )}
                     </td>
                     <td>
                       {date(l.next_followup_at, true)}{" "}
@@ -80,9 +109,10 @@ export function Todos({
                     <td>
                       <button
                         className="button secondary small"
-                        onClick={() => complete(l.id)}
+                        disabled={!!completing}
+                        onClick={() => complete(l)}
                       >
-                        完成本次跟进
+                        {completing === l.todo_key ? "处理中…" : "完成此待办"}
                       </button>
                     </td>
                   </tr>
@@ -93,7 +123,7 @@ export function Todos({
         ) : (
           <Empty
             title="暂无待办"
-            description="在线索详情设置下次跟进时间后，会在这里提醒。"
+            description="线索跟进和试听预约生成的待办会在这里分别提醒。"
           />
         )}
         <Pager list={list} />

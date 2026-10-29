@@ -222,11 +222,20 @@ export function Dashboard({
             <table>
               <tbody>
                 {d.todos.map((l: any) => (
-                  <tr key={l.id}>
+                  <tr key={l.todo_key}>
                     <td>
                       <Link to={"/leads?lead_id=" + l.id}>{l.name}</Link>
                     </td>
                     <td>{date(l.next_followup_at, true)}</td>
+                    <td>
+                      {l.todo_type === "trial" ? (
+                        <Link to={"/trials?trial_id=" + l.trial_id}>
+                          {l.todo_label} · {l.course_name}
+                        </Link>
+                      ) : (
+                        l.todo_label
+                      )}
+                    </td>
                     <td>{l.owner}</td>
                   </tr>
                 ))}

@@ -73,8 +73,9 @@ def update_analysis(db, conv):
     lead = db.scalar(select(Lead).where(Lead.conversation_id==conv.id))
     if lead and user_messages:
         def aware(value):return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
-        if any(WITHDRAW_CONTACT.search(m.content) and aware(m.created_at)>=aware(lead.consent_at) for m in user_messages):
-            lead.contact_allowed=False
+        if lead.contact_allowed and any(WITHDRAW_CONTACT.search(m.content) and aware(m.created_at)>=aware(lead.consent_at) for m in user_messages):
+            from .privacy_lifecycle import withdraw_lead_contact
+            withdraw_lead_contact(db,lead,actor_name='系统',note='访客在咨询中撤回联系许可')
     analysis = analyze_messages([{'id':m.id,'content':m.content} for m in user_messages],bool(lead and lead.contact_allowed),respect_withdrawal=False)
     analysis['knowledge_context']=infer_context('',[m.content for m in user_messages])
     conv.analysis = analysis

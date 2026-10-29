@@ -96,16 +96,18 @@ pipeline {
             fi
             echo "$svc $h" >> .build-state.new
           done
-          # worker 与 backend 同 Dockerfile；compose build worker 会再建一次，用 backend 哈希记录
+          # worker 与 alert-monitor 共用 backend 源码，分别记录镜像构建状态。
           h=$(git rev-parse "HEAD:backend")
-          if grep -qx "worker $h" .build-state.old && docker image inspect chatbot-worker:latest >/dev/null 2>&1; then
-            echo "[skip] worker 未变化（$h）"
-          else
-            start=$(date +%s)
-            $RUNNER docker compose -p "$PROJECT" -f compose.yaml -f compose.prod.yaml build --progress=plain worker
-            echo "[built] worker 用时 $(( $(date +%s) - start ))s"
-          fi
-          echo "worker $h" >> .build-state.new
+          for svc in worker alert-monitor; do
+            if grep -qx "$svc $h" .build-state.old && docker image inspect "chatbot-$svc:latest" >/dev/null 2>&1; then
+              echo "[skip] $svc 未变化（$h）"
+            else
+              start=$(date +%s)
+              $RUNNER docker compose -p "$PROJECT" -f compose.yaml -f compose.prod.yaml build --progress=plain "$svc"
+              echo "[built] $svc 用时 $(( $(date +%s) - start ))s"
+            fi
+            echo "$svc $h" >> .build-state.new
+          done
           docker run --rm -i -v /opt/chatbot:/d alpine:3.20 sh -c 'cat > /d/.build-state' < .build-state.new
         '''
       }

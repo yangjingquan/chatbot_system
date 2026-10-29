@@ -5,14 +5,17 @@ SCHEMA_VERSION is recorded in schema_migrations after each successful apply so
 release scripts can refuse to proceed when the database is behind the code, or
 when a failed upgrade left the DB short of the expected revision.
 """
-from sqlalchemy import inspect, text
+from datetime import timedelta
+from sqlalchemy import inspect, select, text, update
 from .db import Base
 
 # Bump when additive schema steps change. Keep descriptions short and append-only
 # in MIGRATION_NOTES so upgrade docs can cite a revision.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 16
 MIGRATION_NOTES = {
     14: 'v0.4 ops: handoff_note, trial reason, schema_migrations gate',
+    15: 'independent trial follow-up reminders',
+    16: 'email alert delivery tracking',
 }
 
 
@@ -96,7 +99,20 @@ def migrate_schema(engine):
             ),
             'handoff_note': "TEXT NOT NULL DEFAULT ''",
         },
-        'trial_requests': {'reason': "TEXT NOT NULL DEFAULT ''"},
+        'trial_requests': {
+            'reason': "TEXT NOT NULL DEFAULT ''",
+            'todo_due_at': 'TIMESTAMP WITH TIME ZONE' if engine.dialect.name == 'postgresql' else 'TIMESTAMP',
+            'todo_kind': "VARCHAR(40) NOT NULL DEFAULT ''",
+        },
+        'alerts': {
+            'notify_event': "VARCHAR(16) NOT NULL DEFAULT 'alert'",
+            'notify_attempts': 'INTEGER NOT NULL DEFAULT 0',
+            'notify_next_attempt_at': 'TIMESTAMP WITH TIME ZONE' if engine.dialect.name == 'postgresql' else 'TIMESTAMP',
+            'notify_lease_until': 'TIMESTAMP WITH TIME ZONE' if engine.dialect.name == 'postgresql' else 'TIMESTAMP',
+            'notify_token': 'VARCHAR(36)',
+            'notify_last_error': "VARCHAR(300) NOT NULL DEFAULT ''",
+            'notify_sent_at': 'TIMESTAMP WITH TIME ZONE' if engine.dialect.name == 'postgresql' else 'TIMESTAMP',
+        },
         'documents': {
             'edit_sequence': 'INTEGER NOT NULL DEFAULT 0',
             'knowledge_type': "VARCHAR(24) NOT NULL DEFAULT 'general'",
@@ -146,6 +162,18 @@ def migrate_schema(engine):
 
         migrate_contacts(conn)
         _ensure_version_table(conn, engine.dialect.name)
+        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_trial_requests_todo_due_at ON trial_requests(todo_due_at)'))
+        if not conn.execute(text('SELECT 1 FROM schema_migrations WHERE version = 15')).first():
+            # Legacy records did not track completion per trial. Recover active
+            # appointments only, without guessing or clearing manual lead reminders.
+            from .models import Trial
+            for row in conn.execute(select(Trial.id, Trial.status, Trial.created_at, Trial.scheduled_at)
+                                    .where(Trial.todo_due_at.is_(None), Trial.status.in_(['pending', 'confirmed']))):
+                due = row.scheduled_at if row.status == 'confirmed' else row.created_at + timedelta(hours=24)
+                if due:
+                    conn.execute(update(Trial).where(Trial.id == row.id).values(
+                        todo_due_at=due, todo_kind='接待试听' if row.status == 'confirmed' else '确认试听'))
+            _record_version(conn, 15)
         # Restored older DBs that already have additive columns still get marked
         # current after a successful migrate_schema run.
         _record_version(conn, SCHEMA_VERSION)

@@ -7,7 +7,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, literal, union_all
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
@@ -234,17 +234,42 @@ def merge(student_id:str,data:MergeInput,user:Admin=Depends(require('students.me
     audit(db,user,'合并学员档案',source.id+' → '+target.id,data.reason);db.commit();return student_data(db,target,True,user)
 
 def todo_query(db,user,filters,state='all'):
-    query=lead_query(db,user,filters).where(Lead.next_followup_at.is_not(None),Lead.contact_allowed.is_(True),Lead.stage.not_in(['已成交','已失效']))
+    eligible=lead_query(db,user,filters).where(Lead.contact_allowed.is_(True),Lead.stage.not_in(['已成交','已失效'])).with_only_columns(Lead.id).subquery()
+    manual=select(Lead.id.label('lead_id'),literal('manual').label('kind'),literal('').label('trial_id'),
+                  Lead.next_followup_at.label('due_at')).where(Lead.id.in_(select(eligible.c.id)),Lead.next_followup_at.is_not(None))
+    trial=select(Lead.id.label('lead_id'),literal('trial').label('kind'),Trial.id.label('trial_id'),
+                 Trial.todo_due_at.label('due_at')).join(Lead,Lead.conversation_id==Trial.conversation_id).where(
+                     Lead.id.in_(select(eligible.c.id)),Trial.tenant_id==Lead.tenant_id,Trial.todo_due_at.is_not(None))
+    entries=union_all(manual,trial).subquery()
+    query=select(entries)
     today=datetime.combine(aware(now()).astimezone(ZoneInfo('Asia/Shanghai')).date(),time.min,ZoneInfo('Asia/Shanghai'))
-    if state=='overdue':query=query.where(Lead.next_followup_at<now())
-    elif state=='today':query=query.where(Lead.next_followup_at>=today,Lead.next_followup_at<today+timedelta(days=1))
-    elif state=='upcoming':query=query.where(Lead.next_followup_at>=now())
-    return query.order_by(Lead.next_followup_at,Lead.id)
+    if state=='overdue':query=query.where(entries.c.due_at<now())
+    elif state=='today':query=query.where(entries.c.due_at>=today,entries.c.due_at<today+timedelta(days=1))
+    elif state=='upcoming':query=query.where(entries.c.due_at>=now())
+    return query.order_by(entries.c.due_at,entries.c.lead_id,entries.c.kind,entries.c.trial_id)
+
+def todo_data(db,row):
+    from .admin import lead_data
+    lead=db.get(Lead,row.lead_id)
+    trial=db.get(Trial,row.trial_id) if row.kind=='trial' else None
+    result=lead_data(lead)
+    result.update(todo_key=f'{row.kind}:{row.trial_id or row.lead_id}',todo_type=row.kind,
+                  trial_id=row.trial_id or None,todo_label=trial.todo_kind if trial else '线索跟进',
+                  todo_version=trial.version if trial else None,next_followup_at=row.due_at.isoformat())
+    if trial:
+        from .reception import trial_data
+        detail=trial_data(db,trial,True)
+        result.update(course_name=detail['course_name'],batch_name=detail['batch_name'],trial_status=trial.status)
+    return result
 
 @router.get('/todos')
 def todos(filters:BusinessFilters=Depends(),paging:Paging=Depends(),state:Literal['all','overdue','today','upcoming']='all',user:Admin=Depends(require('leads.read')),db:Session=Depends(get_db)):
-    from .admin import lead_data
-    return paginate(db,todo_query(db,user,filters,state),paging,lead_data)
+    from .querying import count
+    query=todo_query(db,user,filters,state)
+    total=count(db,query)
+    rows=db.execute(query.offset((paging.page-1)*paging.page_size).limit(paging.page_size)).all()
+    return {'items':[todo_data(db,row) for row in rows],'total':total,'page':paging.page,
+            'page_size':paging.page_size,'pages':(total+paging.page_size-1)//paging.page_size}
 
 class CompleteInput(BaseModel):
     content:str=Field('已完成本次跟进',min_length=1,max_length=4000)
@@ -254,3 +279,21 @@ def complete(lead_id:str,data:CompleteInput,user:Admin=Depends(require('leads.wr
     from .admin import lead_detail
     lead=scoped_object(db,Lead,lead_id,user);lead.next_followup_at=None
     db.add(FollowUp(lead_id=lead.id,author=user.name,content=data.content));audit(db,user,'完成跟进待办',lead.id);db.commit();return lead_detail(lead.id,user,db)
+
+class TrialTodoComplete(BaseModel):
+    version:int=Field(ge=1)
+    content:str=Field('已完成本次试听跟进',min_length=1,max_length=4000)
+
+@router.post('/trials/{trial_id}/complete-followup')
+def complete_trial_followup(trial_id:str,data:TrialTodoComplete,user:Admin=Depends(require('leads.write')),db:Session=Depends(get_db)):
+    trial=db.scalar(select(Trial).where(Trial.id==trial_id,Trial.tenant_id==user.tenant_id).with_for_update().execution_options(populate_existing=True))
+    if not trial:raise HTTPException(404,'试听待办不存在')
+    lead=db.scalar(scope_leads(select(Lead).where(Lead.conversation_id==trial.conversation_id,Lead.tenant_id==user.tenant_id),user))
+    if not lead:raise HTTPException(404,'试听待办不存在')
+    if not lead.contact_allowed or lead.stage in ('已成交','已失效'):raise HTTPException(409,'线索已停止联系或已结案，不能完成该待办')
+    if trial.version!=data.version or not trial.todo_due_at:raise HTTPException(409,'试听待办已变化，请刷新后重试')
+    label=trial.todo_kind
+    trial.todo_due_at=None;trial.todo_kind='';trial.version+=1
+    db.add(FollowUp(lead_id=lead.id,author=user.name,content=f'【试听·{label}】{data.content}'))
+    audit(db,user,'完成试听待办',trial.id);db.commit()
+    return {'status':'completed','trial_id':trial.id,'version':trial.version}

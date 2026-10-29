@@ -102,10 +102,32 @@ class NotifyPatch(BaseModel):
 @router.put('/admin/ops/notify')
 def put_notify(data: NotifyPatch, user: Admin = Depends(require('settings.write')),
                db: Session = Depends(get_db)):
+    if data.enabled and data.channel == 'email':
+        from .alert_mail import valid_address
+        if not valid_address(data.email_to):
+            raise HTTPException(422, '请填写一个有效的收件邮箱；多人接收可使用邮件组')
     cfg = save_notify_config(db, user.tenant_id, data.model_dump())
     _record(db, user, '更新运维通知渠道', details=f"enabled={cfg['enabled']} channel={cfg['channel']}")
     db.commit()
     return cfg
+
+
+@router.post('/admin/ops/notify/test')
+def test_email(user: Admin = Depends(require('settings.write')), db: Session = Depends(get_db)):
+    from .alert_mail import valid_address
+    cfg = notify_config(db, user.tenant_id)
+    if not cfg['enabled'] or cfg['channel'] != 'email' or not valid_address(cfg['email_to']):
+        raise HTTPException(422, '请先保存并启用有效的邮件通知配置')
+    existing = db.scalar(select(Alert).where(Alert.tenant_id==user.tenant_id, Alert.code=='smtp_test',
+                                              Alert.status=='open', Alert.notify_state.in_(['pending','sending','failed'])))
+    if existing:
+        raise HTTPException(409, '已有测试邮件待发送，请查看告警列表')
+    row = Alert(tenant_id=user.tenant_id,code='smtp_test',severity='info',status='open',
+                title='告警邮件测试',message='这是一封测试邮件，用于验证告警通知渠道。',notify_state='pending')
+    db.add(row);db.flush()
+    _record(db,user,'发送告警测试邮件',row.id)
+    db.commit()
+    return {'id':row.id,'state':row.notify_state}
 
 
 @router.post('/admin/ops/backup-check')

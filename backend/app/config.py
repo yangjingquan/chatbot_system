@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     data_dir: str = './data'
     # Directory for logical/encrypted backups written by scripts (host path or container /data/backups).
     backup_dir: str = './data/backups'
+    smtp_host: str = ''
+    smtp_port: int = 587
+    smtp_security: str = 'starttls'
+    smtp_username: str = ''
+    smtp_password: str = ''
+    smtp_from: str = ''
+    smtp_timeout_seconds: int = 15
+    alert_monitor_interval_seconds: int = 60
     # Default retention days when company config omits the field. 0 = do not auto-clean.
     retention_conversation_days: int = 365
     retention_lead_days: int = 730

@@ -233,6 +233,8 @@ class Trial(Base):
     note: Mapped[str] = mapped_column(Text, default='')
     reason: Mapped[str] = mapped_column(Text, default='')  # cancel / no_show reason
     version: Mapped[int] = mapped_column(Integer, default=1)
+    todo_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    todo_kind: Mapped[str] = mapped_column(String(40), default='', server_default='')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -332,6 +334,13 @@ class Alert(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ack_by: Mapped[str] = mapped_column(String(100), default='')
     notify_state: Mapped[str] = mapped_column(String(24), default='pending')  # pending | skipped | queued | sent | failed
+    notify_event: Mapped[str] = mapped_column(String(16), default='alert', server_default='alert')
+    notify_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+    notify_next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notify_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notify_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    notify_last_error: Mapped[str] = mapped_column(String(300), default='', server_default='')
+    notify_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class KnowledgeTodo(Base):

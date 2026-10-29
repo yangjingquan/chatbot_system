@@ -1,7 +1,8 @@
 """Human reception and trial applications. Conversation scope remains the authority."""
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, or_, and_, update
@@ -96,9 +97,23 @@ class PresenceInput(BaseModel):
 
 @router.put('/admin/presence')
 def heartbeat(data:PresenceInput,user:Admin=Depends(require('conversations.handle')),db:Session=Depends(get_db)):
-    p=db.get(Presence,user.id)
+    db.scalar(select(Admin.id).where(Admin.id==user.id).with_for_update())
+    p=db.scalar(select(Presence).where(Presence.admin_id==user.id).with_for_update())
     if not p:p=Presence(admin_id=user.id);db.add(p)
     p.status=data.status;p.heartbeat_at=now();db.commit()
+    return presence_data(db,user)
+
+@router.post('/admin/presence/heartbeat')
+def renew_presence(user:Admin=Depends(require('conversations.handle')),db:Session=Depends(get_db)):
+    # A heartbeat never carries a tab's cached choice, so another tab cannot
+    # accidentally revert an explicit change. Expired sessions restart offline.
+    db.scalar(select(Admin.id).where(Admin.id==user.id).with_for_update())
+    p=db.scalar(select(Presence).where(Presence.admin_id==user.id).with_for_update())
+    if not p:
+        p=Presence(admin_id=user.id,status='offline');db.add(p)
+    elif aware(p.heartbeat_at)<=now()-timedelta(seconds=90):
+        p.status='offline'
+    p.heartbeat_at=now();db.commit()
     return presence_data(db,user)
 
 @router.get('/admin/reception-staff')
@@ -205,8 +220,10 @@ def trial_data(db,t,public=False):
     batch=db.get(CourseBatch,t.batch_id);course=db.get(Course,batch.course_id) if batch else None
     advisor=db.get(Admin,t.advisor_id) if t.advisor_id else None
     result={k:(getattr(t,k).isoformat() if isinstance(getattr(t,k),datetime) else getattr(t,k)) for k in ('id','conversation_id','batch_id','requested_at','scheduled_at','advisor_id','status','version','created_at')}
-    result.update(course_name=course.name if course else '历史课程',batch_name=batch.name if batch else '历史班次',advisor_name=advisor.name if advisor else '待分配')
+    result.update(course_name=course.name if course else '历史课程',batch_name=batch.name if batch else '历史班次',advisor_name=advisor.name if advisor else '待分配',is_demo=bool(course.is_demo) if course else False)
     if not public:
+        result['todo_due_at']=t.todo_due_at.isoformat() if t.todo_due_at else None
+        result['todo_kind']=t.todo_kind
         result['note']=t.note
         result['reason']=getattr(t,'reason','') or ''
         lead=db.scalar(select(Lead).where(Lead.conversation_id==t.conversation_id))
@@ -221,7 +238,7 @@ def trial_data(db,t,public=False):
         result['auto_todo_rule']=TRIAL_AUTO_TODO.get(t.status,'')
     return result
 
-# Which status changes auto-write a follow-up note and set next_followup_at.
+# Each trial owns its current reminder independently of the lead's manual reminder.
 TRIAL_AUTO_TODO={
     'pending':'申请后自动生成「确认试听」待办（约 24 小时内）',
     'confirmed':'确认后自动把待办时间设为试听确认时间',
@@ -242,12 +259,25 @@ def trial_manual_actions(t,lead):
         if not lead.contact_allowed:actions.append('联系许可已撤回，请先取得新许可再跟进')
     return actions
 
-def schedule_trial_todo(db,lead,when,content,author='系统'):
-    """Write a follow-up note and set next_followup_at. Does not change stage/owner/student."""
+def schedule_trial_todo(db,lead,trial,when,kind,content,author='系统'):
+    """Replace only this trial's reminder and retain its follow-up history."""
     if lead is None or not lead.contact_allowed:return False
-    lead.next_followup_at=when
+    trial.todo_due_at=when
+    trial.todo_kind=kind
     db.add(FollowUp(lead_id=lead.id,author=author,content=content[:4000]))
     return True
+
+def trial_time_text(value):
+    return aware(value).astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M')+'（北京时间）'
+
+def notify_trial(db,trial,content):
+    # Persist notices in the visitor's own conversation so they survive reloads.
+    batch=db.get(CourseBatch,trial.batch_id)
+    course=db.get(Course,batch.course_id) if batch else None
+    label=f'{course.name if course else "历史课程"} / {batch.name if batch else "历史班次"}'
+    if course and course.is_demo:label+='（示例）'
+    db.add(Message(conversation_id=trial.conversation_id,role='system',mode='trial_update',
+                   content=f'【试听预约：{label}，意向时间 {trial_time_text(trial.requested_at)}】{content}'))
 
 def locked_batch(db,bid,tenant):
     initial=db.scalar(select(CourseBatch).where(CourseBatch.id==bid,CourseBatch.tenant_id==tenant))
@@ -276,22 +306,73 @@ def create_trial(sid:str,data:TrialInput,request:Request,db:Session=Depends(get_
     conv=visitor(request,sid,db)
     db.scalar(select(Conversation).where(Conversation.id==sid).with_for_update())
     existing=db.scalar(select(Trial).where(Trial.conversation_id==sid,Trial.client_id==data.client_id))
-    if existing:return trial_data(db,existing,True)
+    if existing:return {**trial_data(db,existing,True),'already_exists':True}
     limit('trial:'+sid,6,300)
     lead=db.scalar(select(Lead).where(Lead.conversation_id==sid,Lead.contact_allowed.is_(True)))
     if not lead:raise HTTPException(422,'请先自愿留下本次试听的联系方式并同意联系')
-    if not now()<aware(data.requested_at)<now()+timedelta(days=180):raise HTTPException(422,'请选择未来 180 天内的意向时间')
+    requested_at=aware(data.requested_at).astimezone(timezone.utc)
+    if not now()<requested_at<now()+timedelta(days=180):raise HTTPException(422,'请选择未来 180 天内的意向时间')
     from .catalog import batch_available
     b,c=locked_batch(db,data.batch_id,conv.tenant_id)
     if not batch_available(b,c):raise HTTPException(422,'该班次当前不接受试听申请')
-    if b.ends_at and aware(data.requested_at)>aware(b.ends_at):raise HTTPException(422,'意向试听时间不能晚于班次结束时间')
-    t=Trial(tenant_id=conv.tenant_id,conversation_id=sid,batch_id=b.id,requested_at=data.requested_at,client_id=data.client_id)
+    if b.ends_at and requested_at>aware(b.ends_at):raise HTTPException(422,'意向试听时间不能晚于班次结束时间')
+    # The conversation row is locked above, so concurrent submissions for the
+    # same visitor cannot both pass this business-level duplicate check.
+    existing=db.scalar(select(Trial).where(
+        Trial.conversation_id==sid,Trial.batch_id==b.id,
+        Trial.requested_at==requested_at,
+        Trial.status.in_(['pending','confirmed'])))
+    if existing:return {**trial_data(db,existing,True),'already_exists':True}
+    t=Trial(tenant_id=conv.tenant_id,conversation_id=sid,batch_id=b.id,requested_at=requested_at,client_id=data.client_id)
     db.add(t);db.flush()
-    schedule_trial_todo(db,lead,now()+timedelta(hours=24),
+    schedule_trial_todo(db,lead,t,now()+timedelta(hours=24),'确认试听',
                         f'【试听·自动待办】访客申请试听「{c.name if c else "课程"} / {b.name}」，意向时间 {aware(data.requested_at).isoformat()}。请确认时间与顾问。',
                         author='系统')
     if lead.stage in ('新线索','待分配'):lead.stage='跟进中'
-    db.commit();return trial_data(db,t,True)
+    db.commit();return {**trial_data(db,t,True),'already_exists':False}
+
+class VisitorTrialChange(BaseModel):
+    version:int=Field(ge=1)
+    action:Literal['cancel','reschedule']
+    requested_at:datetime|None=None
+
+@router.patch('/widget/sessions/{sid}/trials/{tid}')
+def visitor_change_trial(sid:str,tid:str,data:VisitorTrialChange,request:Request,db:Session=Depends(get_db)):
+    conv=visitor(request,sid,db)
+    db.scalar(select(Conversation.id).where(Conversation.id==sid).with_for_update())
+    t=db.scalar(select(Trial).where(Trial.id==tid,Trial.conversation_id==sid,Trial.tenant_id==conv.tenant_id).with_for_update().execution_options(populate_existing=True))
+    if not t:raise HTTPException(404,'试听申请不存在')
+    if t.version!=data.version:raise HTTPException(409,'申请已变化，请刷新后重试')
+    if t.status not in ('pending','confirmed'):raise HTTPException(409,'当前状态不能取消或改期，请联系顾问')
+    if t.status=='confirmed' and t.scheduled_at and aware(t.scheduled_at)<=now():raise HTTPException(409,'试听时间已到，请联系顾问处理')
+    limit('trial-change:'+sid,12,300)
+    lead=db.scalar(select(Lead).where(Lead.conversation_id==sid).with_for_update())
+    if data.action=='cancel':
+        t.status='cancelled';t.reason='访客自行取消'
+        schedule_trial_todo(db,lead,t,now()+timedelta(days=1),'取消后回访',
+                            '【试听·自动待办】访客自行取消试听，请确认是否继续跟进。')
+        notify_trial(db,t,'您的试听申请已取消。如需重新预约，可再次提交申请。')
+    else:
+        if not lead or not lead.contact_allowed:raise HTTPException(422,'请先重新留下联系方式并同意联系')
+        if not data.requested_at:raise HTTPException(422,'请选择新的意向时间')
+        requested=aware(data.requested_at).astimezone(timezone.utc)
+        if not now()<requested<now()+timedelta(days=180):raise HTTPException(422,'请选择未来 180 天内的意向时间')
+        current=aware(t.scheduled_at) if t.status=='confirmed' and t.scheduled_at else aware(t.requested_at)
+        if requested==current:raise HTTPException(422,'请选择与当前预约不同的时间')
+        from .catalog import batch_available
+        b,c=locked_batch(db,t.batch_id,conv.tenant_id)
+        if not batch_available(b,c):raise HTTPException(422,'该班次当前不接受试听申请')
+        if b.ends_at and requested>aware(b.ends_at):raise HTTPException(422,'意向试听时间不能晚于班次结束时间')
+        duplicate=db.scalar(select(Trial.id).where(Trial.id!=t.id,Trial.conversation_id==sid,Trial.batch_id==t.batch_id,
+                                                   Trial.requested_at==requested,Trial.status.in_(['pending','confirmed'])))
+        if duplicate:raise HTTPException(409,'该班次和时间已有其他试听申请，请查看已有预约')
+        t.requested_at=requested;t.status='pending';t.scheduled_at=None;t.advisor_id=None;t.reason=''
+        schedule_trial_todo(db,lead,t,now()+timedelta(hours=24),'确认试听',
+                            f'【试听·自动待办】访客申请改期至 {trial_time_text(requested)}，请重新确认。')
+        notify_trial(db,t,f'已收到您的改期申请，新的意向时间为 {trial_time_text(requested)}，顾问核实后确认。')
+    t.version+=1
+    db.commit()
+    return trial_data(db,t,True)
 
 @router.get('/admin/trials')
 def trials(paging:Paging=Depends(),status:str='',include_demo:bool=True,user:Admin=Depends(require('conversations.read')),db:Session=Depends(get_db)):
@@ -334,6 +415,9 @@ class TrialPatch(BaseModel):
     scheduled_at:datetime|None=None
     note:str=Field('',max_length=1000)
     reason:str=Field('',max_length=1000)
+    confirm_early:bool=False
+    early_reason:str=Field('',max_length=1000)
+    correction_reason:str=Field('',max_length=1000)
 
 @router.patch('/admin/trials/{tid}')
 def patch_trial(tid:str,data:TrialPatch,user:Admin=Depends(require('conversations.handle')),db:Session=Depends(get_db)):
@@ -343,12 +427,27 @@ def patch_trial(tid:str,data:TrialPatch,user:Admin=Depends(require('conversation
     if not t:raise HTTPException(404,'申请不存在')
     scoped_object(db,Conversation,t.conversation_id,user)
     if t.version!=data.version:raise HTTPException(409,'申请已变化，请刷新')
-    allowed={'pending':{'confirmed','cancelled'},'confirmed':{'confirmed','attended','no_show','cancelled'},'attended':set(),'no_show':set(),'cancelled':set()}
+    allowed={'pending':{'confirmed','cancelled'},'confirmed':{'confirmed','attended','no_show','cancelled'},'attended':{'pending'},'no_show':{'pending'},'cancelled':{'pending'}}
     if data.status not in allowed.get(t.status,set()):raise HTTPException(409,'不允许此状态变更')
+    previous_status=t.status
+    previous_scheduled=t.scheduled_at
+    correcting=data.status=='pending' and previous_status in ('attended','no_show','cancelled')
+    correction_reason=data.correction_reason.strip()
+    if correcting and not correction_reason:raise HTTPException(422,'更正试听状态须填写原因')
     lead=db.scalar(select(Lead).where(Lead.conversation_id==t.conversation_id).with_for_update().execution_options(populate_existing=True))
     reason=(data.reason or '').strip()
     if data.status in ('cancelled','no_show') and not reason:raise HTTPException(422,'取消或未参加须填写原因')
-    if data.status=='confirmed':
+    early=data.status=='attended' and t.scheduled_at and aware(t.scheduled_at)>now()
+    if early and (not data.confirm_early or not data.early_reason.strip()):
+        raise HTTPException(422,'试听确认时间尚未到，请确认提前参加并填写原因')
+    if correcting:
+        t.scheduled_at=None;t.advisor_id=None;t.reason=''
+        t.todo_due_at=None;t.todo_kind=''
+        previous_label={'attended':'已参加','no_show':'未参加','cancelled':'已取消'}[previous_status]
+        if not schedule_trial_todo(db,lead,t,now()+timedelta(hours=24),'确认试听',
+                                   f'【试听·状态更正】由{previous_label}更正为待确认。原因：{correction_reason}。请重新核实。',author=user.name) and lead:
+            db.add(FollowUp(lead_id=lead.id,author=user.name,content=f'【试听·状态更正】由{previous_label}更正为待确认。原因：{correction_reason}。'))
+    elif data.status=='confirmed':
         a=db.get(Admin,data.advisor_id or t.advisor_id)
         scheduled=data.scheduled_at or t.scheduled_at
         if not lead or not lead.contact_allowed:raise HTTPException(409,'该访客已停止联系，请先取得新的联系许可')
@@ -362,27 +461,35 @@ def patch_trial(tid:str,data:TrialPatch,user:Admin=Depends(require('conversation
         t.advisor_id=a.id;t.scheduled_at=scheduled
         course_name=c.name if c else '课程'
         batch_name=b.name
-        schedule_trial_todo(db,lead,aware(scheduled),
+        schedule_trial_todo(db,lead,t,aware(scheduled),'接待试听',
                             f'【试听·自动待办】已确认试听「{course_name} / {batch_name}」，确认时间 {aware(scheduled).isoformat()}，顾问 {a.name}。请按时接待。',
                             author=user.name)
     elif data.status=='attended':
-        schedule_trial_todo(db,lead,now()+timedelta(days=1),
-                            f'【试听·自动待办】访客已参加试听。请顾问人工确认后续阶段（商机推进/成交等），并完成转化跟进。',
+        schedule_trial_todo(db,lead,t,now()+timedelta(days=1),'试听后跟进',
+                            f'【试听·自动待办】访客已参加试听。'+(f'提前参加原因：{data.early_reason.strip()}。' if early else '')+'请顾问人工确认后续阶段（商机推进/成交等），并完成转化跟进。',
                             author=user.name)
     elif data.status=='no_show':
         t.reason=reason
-        schedule_trial_todo(db,lead,now()+timedelta(hours=4),
+        schedule_trial_todo(db,lead,t,now()+timedelta(hours=4),'未参加回访',
                             f'【试听·自动待办】访客未参加试听。原因：{reason}。请尽快回访。',
                             author=user.name)
     elif data.status=='cancelled':
         t.reason=reason
-        schedule_trial_todo(db,lead,now()+timedelta(days=1),
+        schedule_trial_todo(db,lead,t,now()+timedelta(days=1),'取消后回访',
                             f'【试听·自动待办】试听已取消。原因：{reason}。请确认是否继续跟进或人工标为已失效。',
                             author=user.name)
     t.status=data.status;t.note=data.note;t.version+=1
-    if data.status not in ('cancelled','no_show') and reason:t.reason=reason
+    if not correcting and data.status not in ('cancelled','no_show') and reason:t.reason=reason
     from .admin import record
-    record(db,user,'更新试听申请',t.id+':'+t.status+((':'+reason[:80]) if reason else ''))
+    details=correction_reason if correcting else data.early_reason.strip() if early else reason
+    record(db,user,'更正试听状态' if correcting else '更新试听申请',t.id+':'+previous_status+'→'+t.status+((':'+details[:200]) if details else ''))
+    if correcting:
+        notify_trial(db,t,'您的试听状态已更正为待确认，顾问会重新核实安排。')
+    elif data.status=='confirmed' and (previous_status!='confirmed' or aware(previous_scheduled)!=aware(t.scheduled_at)):
+        notify_trial(db,t,f'您的试听已确认，时间为 {trial_time_text(t.scheduled_at)}；如有变化可在预约中申请改期或取消。')
+    elif data.status in ('attended','no_show','cancelled'):
+        label={'attended':'已参加','no_show':'未参加','cancelled':'已取消'}[data.status]
+        notify_trial(db,t,f'您的试听状态已更新为“{label}”。如有疑问，请联系顾问。')
     db.commit()
     return trial_detail(t.id,user,db)
 

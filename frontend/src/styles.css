@@ -3319,6 +3319,21 @@ tbody tr:hover {
 .table-scroll-hint {display:none;margin:0;padding:0 20px 10px;color:#5f6f84;font-size:12px}
 .widget-trials {margin:12px 0}
 .widget-trials .contact-form {margin-top:10px}
+.trial-receipt {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid #b9d8ca;
+  border-radius: 8px;
+  background: #f1f8f4;
+  color: #204e39;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.trial-receipt p { margin: 4px 0 0; }
+.widget-trial-item { border-top: 1px solid #dce6f3; margin-top: 14px; padding-top: 10px; }
+.widget-trial-item p { line-height: 1.6; margin: 0 0 8px; }
+.widget-trial-item .actions { flex-wrap: wrap; gap: 6px; }
 .list-toolbar {display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 20px}
 .list-toolbar label {display:flex;align-items:center;gap:8px;white-space:nowrap}
 .cell-sub {display:block;color:var(--muted);margin-top:5px}
@@ -3377,6 +3392,49 @@ tbody tr:hover {
   flex-direction: column;
   gap: 14px;
   max-width: 520px;
+}
+.notify-panel {
+  max-width: 760px;
+  padding: 24px 28px 28px;
+}
+.notify-heading p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.notify-service-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 20px 0 24px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #f3f7fc;
+  color: #405a77;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.notify-service-status svg { flex: none; margin-top: 2px; }
+.notify-service-status p { margin: 0; }
+.notify-service-status p + p { margin-top: 4px; }
+.notify-form { gap: 20px; }
+.notify-form label { margin: 0; }
+.notify-form .toggle-label {
+  min-height: 32px;
+  gap: 9px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  white-space: normal;
+}
+.notify-form .toggle-label input { accent-color: var(--blue); }
+.notify-form label > small { line-height: 1.6; }
+.notify-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.notify-hint { margin: -8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+@media (max-width: 640px) {
+  .notify-panel { padding: 20px 18px 22px; }
+  .notify-actions .button { flex: 1 1 auto; }
 }
 
 

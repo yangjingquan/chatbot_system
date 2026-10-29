@@ -76,6 +76,25 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+  alert-monitor:
+    build: ./backend
+    command: [python, -m, app.alert_worker]
+    environment:
+      <<: *backend_environment
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-15}
+      ALERT_MONITOR_INTERVAL_SECONDS: ${ALERT_MONITOR_INTERVAL_SECONDS:-60}
+    volumes:
+      - app_data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
   web:
     build: ./frontend
     ports:
