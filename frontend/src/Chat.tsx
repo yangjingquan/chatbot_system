@@ -46,6 +46,28 @@ export function Chat() {
   const parentOrigin = new URLSearchParams(location.search).get("parentOrigin");
   const isPreview = new URLSearchParams(location.search).get("preview") === "1";
   const embedded = window.parent !== window;
+  function reportPreviewStatus(status: "ready" | "error", message = "") {
+    if (!isPreview || !embedded) return;
+    window.parent.postMessage(
+      { type: "zhixing:preview-status", status, message },
+      location.origin,
+    );
+  }
+  useEffect(() => {
+    if (!isPreview || !embedded) return;
+    const onPreviewProbe = (event: MessageEvent) => {
+      if (
+        event.origin !== location.origin ||
+        event.source !== window.parent ||
+        event.data?.type !== "zhixing:preview-probe"
+      )
+        return;
+      if (error && !credential) reportPreviewStatus("error", error);
+      else if (config && credential) reportPreviewStatus("ready");
+    };
+    window.addEventListener("message", onPreviewProbe);
+    return () => window.removeEventListener("message", onPreviewProbe);
+  }, [isPreview, embedded, config, credential, error]);
   const tokenHeaders = (c: Credential) => ({
     Authorization: "Bearer " + c.token,
   });
@@ -134,10 +156,14 @@ export function Chat() {
           setMessages(history?.messages || []);
           setStatus(history?.status || "bot");
           setHasContact(history?.has_contact || false);
+          reportPreviewStatus("ready");
         }
       })
       .catch((e) => {
-        if (active) setError(e.message);
+        if (active) {
+          setError(e.message);
+          reportPreviewStatus("error", e.message);
+        }
       });
     return () => {
       active = false;

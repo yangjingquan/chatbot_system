@@ -216,11 +216,21 @@ def transfer(sid:str,data:TransferInput,user:Admin=Depends(require('conversation
     publish(user.tenant_id,'conversation.transferred',conversation_id=sid,assigned_to_id=target.id,from_id=user.id)
     return {'status':conv.status,'assigned_to_id':target.id,'handoff_note':conv.handoff_note or ''}
 
+def trial_batch_display_name(name,is_demo):
+    return '基础班' if is_demo and name=='演示基础班' else name
+
+def trial_batch_text(name,is_demo):
+    label=trial_batch_display_name(name,is_demo)
+    return label+'（示例）' if is_demo else label
+
 def trial_data(db,t,public=False):
     batch=db.get(CourseBatch,t.batch_id);course=db.get(Course,batch.course_id) if batch else None
     advisor=db.get(Admin,t.advisor_id) if t.advisor_id else None
     result={k:(getattr(t,k).isoformat() if isinstance(getattr(t,k),datetime) else getattr(t,k)) for k in ('id','conversation_id','batch_id','requested_at','scheduled_at','advisor_id','status','version','created_at')}
-    result.update(course_name=course.name if course else '历史课程',batch_name=batch.name if batch else '历史班次',advisor_name=advisor.name if advisor else '待分配',is_demo=bool(course.is_demo) if course else False)
+    is_demo=bool(course.is_demo) if course else False
+    result.update(course_name=course.name if course else '历史课程',
+                  batch_name=trial_batch_display_name(batch.name,is_demo) if batch else '历史班次',
+                  advisor_name=advisor.name if advisor else '待分配',is_demo=is_demo)
     if not public:
         result['todo_due_at']=t.todo_due_at.isoformat() if t.todo_due_at else None
         result['todo_kind']=t.todo_kind
@@ -274,8 +284,7 @@ def notify_trial(db,trial,content):
     # Persist notices in the visitor's own conversation so they survive reloads.
     batch=db.get(CourseBatch,trial.batch_id)
     course=db.get(Course,batch.course_id) if batch else None
-    label=f'{course.name if course else "历史课程"} / {batch.name if batch else "历史班次"}'
-    if course and course.is_demo:label+='（示例）'
+    label=f'{course.name if course else "历史课程"} / {trial_batch_text(batch.name,bool(course and course.is_demo)) if batch else "历史班次"}'
     db.add(Message(conversation_id=trial.conversation_id,role='system',mode='trial_update',
                    content=f'【试听预约：{label}，意向时间 {trial_time_text(trial.requested_at)}】{content}'))
 
@@ -326,7 +335,7 @@ def create_trial(sid:str,data:TrialInput,request:Request,db:Session=Depends(get_
     t=Trial(tenant_id=conv.tenant_id,conversation_id=sid,batch_id=b.id,requested_at=requested_at,client_id=data.client_id)
     db.add(t);db.flush()
     schedule_trial_todo(db,lead,t,now()+timedelta(hours=24),'确认试听',
-                        f'【试听·自动待办】访客申请试听「{c.name if c else "课程"} / {b.name}」，意向时间 {aware(data.requested_at).isoformat()}。请确认时间与顾问。',
+                        f'【试听·自动待办】访客申请试听「{c.name if c else "课程"} / {trial_batch_text(b.name,bool(c and c.is_demo))}」，意向时间 {trial_time_text(data.requested_at)}。请确认时间与顾问。',
                         author='系统')
     if lead.stage in ('新线索','待分配'):lead.stage='跟进中'
     db.commit();return {**trial_data(db,t,True),'already_exists':False}
@@ -460,9 +469,9 @@ def patch_trial(tid:str,data:TrialPatch,user:Admin=Depends(require('conversation
         if b.ends_at and aware(scheduled)>aware(b.ends_at):raise HTTPException(422,'确认时间不能晚于班次结束时间')
         t.advisor_id=a.id;t.scheduled_at=scheduled
         course_name=c.name if c else '课程'
-        batch_name=b.name
+        batch_name=trial_batch_text(b.name,bool(c and c.is_demo))
         schedule_trial_todo(db,lead,t,aware(scheduled),'接待试听',
-                            f'【试听·自动待办】已确认试听「{course_name} / {batch_name}」，确认时间 {aware(scheduled).isoformat()}，顾问 {a.name}。请按时接待。',
+                            f'【试听·自动待办】已确认试听「{course_name} / {batch_name}」，确认时间 {trial_time_text(scheduled)}，顾问 {a.name}。请按时接待。',
                             author=user.name)
     elif data.status=='attended':
         schedule_trial_todo(db,lead,t,now()+timedelta(days=1),'试听后跟进',

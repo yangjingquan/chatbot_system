@@ -1072,6 +1072,11 @@ hr {
 .table-wrap {
   overflow-x: auto;
   max-width: 100%;
+  overscroll-behavior-x: contain;
+}
+.table-wrap[role="region"]:focus-visible {
+  outline: 2px solid var(--blue, #3563a4);
+  outline-offset: -2px;
 }
 table {
   width: 100%;
@@ -1199,6 +1204,31 @@ tbody tr:hover {
   padding: 18px 22px;
   border-bottom: 1px solid var(--border);
 }
+.business-filter-toggle {
+  display: none;
+}
+.business-filter-advanced {
+  display: contents;
+}
+.course-filters {
+  justify-content: flex-start;
+}
+.course-filters input {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+.course-filters > .select-control {
+  flex: 0 1 220px;
+}
+.knowledge-status-filters {
+  justify-content: flex-start;
+  min-height: 58px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.knowledge-status-filters > .select-control {
+  flex: 0 1 220px;
+}
 .business-filters label {
   font-size: 11px;
   color: var(--muted);
@@ -1261,13 +1291,65 @@ tbody tr:hover {
   font-weight: 600;
   color: #526982;
 }
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .business-filters {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 14px;
   }
   .filter-search {
     grid-column: 1 / -1;
+  }
+  .business-filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    grid-column: 1 / -1;
+    min-height: 38px;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #f8fafc;
+    color: #42556e;
+    text-align: left;
+    font: inherit;
+    font-size: 12px;
+  }
+  .business-filter-toggle svg {
+    margin-left: auto;
+    transition: transform 150ms ease;
+  }
+  .business-filter-toggle[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+  }
+  .business-filter-toggle:focus-visible {
+    outline: 2px solid #9bbbe8;
+    outline-offset: 2px;
+  }
+  .filter-active-count {
+    color: #285fa9;
+    font-weight: 600;
+  }
+  .business-filter-advanced:not([hidden]) {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .business-filter-advanced > label {
+    min-width: 0;
+  }
+  .course-filters input {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .course-filters > .select-control,
+  .knowledge-status-filters > .select-control {
+    flex: 1 1 calc(50% - 7px);
+    min-width: 0;
+  }
+  .knowledge-status-filters {
+    gap: 8px;
+    padding: 12px 14px;
   }
   .pagination {
     padding: 12px;
@@ -1929,6 +2011,32 @@ tbody tr:hover {
   border: 0;
   display: block;
   border-top: 1px solid var(--border);
+}
+.preview-frame-wrap {
+  position: relative;
+  min-height: 360px;
+}
+.preview-frame-state {
+  position: absolute;
+  inset: 1px 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: #fff;
+  color: var(--muted);
+  text-align: center;
+}
+.preview-frame-state p {
+  max-width: 40ch;
+  margin: 0;
+  line-height: 1.7;
+}
+.preview-frame-state .loading {
+  min-height: 0;
+  padding: 0;
 }
 .audit-panel {
   grid-column: 1/-1;

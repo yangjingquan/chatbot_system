@@ -7,6 +7,8 @@ import { useAccess } from "./auth";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
 import { exams, Filters, Pager, usePaged } from "./lists";
 import { trialLabels } from "./Reception";
+import { followupCopy } from "./timeCopy";
+import { exampleBatchCopy } from "./displayCopy";
 
 export function StudentAssociation({
   lead,
@@ -641,7 +643,9 @@ export function Students({
                             {trialLabels[t.status] || t.status}
                           </Link>
                           <small>
-                            {t.lead_name || ""} · 意向{" "}
+                            {t.lead_name || ""} ·{" "}
+                            {exampleBatchCopy(t.batch_name, t.is_demo)}
+                            {t.is_demo ? "（示例）" : ""} · 意向{" "}
                             {date(t.requested_at, true)}
                             {t.reason ? ` · ${t.reason}` : ""}
                           </small>
@@ -656,7 +660,7 @@ export function Students({
                         <strong>
                           {f.author} · {date(f.created_at, true)}
                         </strong>
-                        <p>{f.content}</p>
+                        <p>{followupCopy(f.content)}</p>
                       </blockquote>
                     ))}
                     {can("students.merge") && (

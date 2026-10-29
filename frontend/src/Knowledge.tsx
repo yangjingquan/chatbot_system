@@ -392,7 +392,7 @@ export function Knowledge({
             business={false}
             placeholder="搜索知识名称"
           />
-          <div className="toolbar">
+          <div className="toolbar knowledge-status-filters">
             <Select
               aria-label="知识状态筛选"
               value={list.filters.status || ""}
@@ -427,81 +427,93 @@ export function Knowledge({
           ) : r.error ? (
             <ErrorBox text={r.error} retry={r.reload} />
           ) : docs.length ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>知识名称</th>
-                    <th>正式 / 草稿状态</th>
-                    <th>适用范围</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {docs.map((d) => (
-                    <tr
-                      key={d.id}
-                      className={edit?.id === d.id ? "selected-row" : ""}
-                    >
-                      <td>
-                        <button
-                          className="document-link"
-                          onClick={() => open(d.id)}
-                        >
-                          <span className="file-icon">
-                            <FileText size={19} />
-                          </span>
-                          <span>
-                            <strong>{d.title}</strong>
-                            <small>
-                              {d.category}
-                              {d.is_demo ? " · 示例资料" : ""}
-                            </small>
-                          </span>
-                        </button>
-                      </td>
-                      <td>
-                        <Badge
-                          tone={
-                            d.effective_status === "published"
-                              ? "green"
-                              : "muted"
-                          }
-                        >
-                          {d.version ? "v" + d.version + " · " : ""}
-                          {statusLabel[d.effective_status]}
-                        </Badge>
-                        {d.draft_status && (
-                          <small className="visibility">
-                            <Badge tone="amber">
-                              v{d.draft_number} {statusLabel[d.draft_status]}
-                            </Badge>
-                          </small>
-                        )}
-                      </td>
-                      <td>
-                        <small>
-                          {d.exam_type} · {d.region}
-                          <br />
-                          {d.exam_year
-                            ? d.exam_year + " 年度"
-                            : "未限制年度"} · {statusLabel[d.visibility]}
-                        </small>
-                      </td>
-                      <td>
-                        <button
-                          className="icon-button"
-                          aria-label={"查看" + d.title}
-                          onClick={() => open(d.id)}
-                        >
-                          <ChevronRight size={17} />
-                        </button>
-                      </td>
+            <>
+              <p className="table-scroll-hint" id="knowledge-table-scroll-hint">
+                知识列表可横向滚动，右侧包含查看操作；聚焦列表后可用左右方向键滚动。
+              </p>
+              <div
+                className="table-wrap knowledge-table"
+                role="region"
+                aria-label="知识资料列表，可横向滚动"
+                aria-describedby="knowledge-table-scroll-hint"
+                tabIndex={0}
+              >
+                <table>
+                  <thead>
+                    <tr>
+                      <th>知识名称</th>
+                      <th>正式 / 草稿状态</th>
+                      <th>适用范围</th>
+                      <th />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {docs.map((d) => (
+                      <tr
+                        key={d.id}
+                        className={edit?.id === d.id ? "selected-row" : ""}
+                      >
+                        <td>
+                          <button
+                            className="document-link"
+                            onClick={() => open(d.id)}
+                          >
+                            <span className="file-icon">
+                              <FileText size={19} />
+                            </span>
+                            <span>
+                              <strong>{d.title}</strong>
+                              <small>
+                                {d.category}
+                                {d.is_demo ? " · 示例资料" : ""}
+                              </small>
+                            </span>
+                          </button>
+                        </td>
+                        <td>
+                          <Badge
+                            tone={
+                              d.effective_status === "published"
+                                ? "green"
+                                : "muted"
+                            }
+                          >
+                            {d.version ? "v" + d.version + " · " : ""}
+                            {statusLabel[d.effective_status]}
+                          </Badge>
+                          {d.draft_status && (
+                            <small className="visibility">
+                              <Badge tone="amber">
+                                v{d.draft_number} {statusLabel[d.draft_status]}
+                              </Badge>
+                            </small>
+                          )}
+                        </td>
+                        <td>
+                          <small>
+                            {d.exam_type} · {d.region}
+                            <br />
+                            {d.exam_year
+                              ? d.exam_year + " 年度"
+                              : "未限制年度"}{" "}
+                            · {statusLabel[d.visibility]}
+                          </small>
+                        </td>
+                        <td>
+                          <button
+                            className="icon-button"
+                            aria-label={"查看" + d.title}
+                            onClick={() => open(d.id)}
+                          >
+                            <ChevronRight size={17} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
             <Empty
               title="没有匹配的知识"

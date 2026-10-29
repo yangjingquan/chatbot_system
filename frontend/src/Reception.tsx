@@ -1,5 +1,6 @@
 import { Select } from "./Select";
 import { exampleBatchCopy } from "./displayCopy";
+import { followupCopy } from "./timeCopy";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, date, useResource } from "./api";
@@ -283,7 +284,10 @@ export function Trials({
                     <tr key={t.id}>
                       <td>
                         {t.course_name}
-                        <small className="cell-sub">{t.batch_name}</small>
+                        <small className="cell-sub">
+                          {exampleBatchCopy(t.batch_name, t.is_demo)}
+                          {t.is_demo ? "（示例）" : ""}
+                        </small>
                       </td>
                       <td>
                         {t.lead_name || "—"}
@@ -337,7 +341,10 @@ export function Trials({
       {selected && (
         <section className="panel quality-editor">
           <h2>
-            {selected.course_name} · {trialLabels[selected.status]}
+            {selected.course_name} ·{" "}
+            {exampleBatchCopy(selected.batch_name, selected.is_demo)}
+            {selected.is_demo ? "（示例）" : ""} ·{" "}
+            {trialLabels[selected.status]}
           </h2>
           <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
             <Link
@@ -509,7 +516,7 @@ export function Trials({
                 {selected.followups.map((f: any) => (
                   <li key={f.id}>
                     <strong>{f.author}</strong> · {date(f.created_at, true)}
-                    <div>{f.content}</div>
+                    <div>{followupCopy(f.content)}</div>
                   </li>
                 ))}
               </ul>
@@ -732,7 +739,9 @@ export function WidgetTrial({
           {trials.map((t) => (
             <div className="widget-trial-item" key={t.id}>
               <p>
-                <strong>{trialLabels[t.status]}</strong> · {t.course_name}
+                <strong>{trialLabels[t.status]}</strong> · {t.course_name} ·{" "}
+                {exampleBatchCopy(t.batch_name, t.is_demo)}
+                {t.is_demo ? "（示例）" : ""}
                 <br />
                 {t.scheduled_at
                   ? "确认时间：" + date(t.scheduled_at, true)

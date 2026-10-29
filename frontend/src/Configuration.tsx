@@ -1,6 +1,6 @@
 import { Select } from "./Select";
 import { Pager, usePaged } from "./lists";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Save,
   Copy,
@@ -29,6 +29,12 @@ export function Configuration({
     audit = auditList.resource;
   const r = useResource<any>("/admin/settings", version),
     toast = useToast();
+  const [previewAttempt, setPreviewAttempt] = useState(0);
+  const [previewState, setPreviewState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const [previewError, setPreviewError] = useState("");
+  const previewFrame = useRef<HTMLIFrameElement>(null);
   const [form, setForm] = useState<any>(null),
     [questions, setQuestions] = useState(""),
     [embedOrigins, setEmbedOrigins] = useState(""),
@@ -46,6 +52,52 @@ export function Configuration({
       );
     }
   }, [r.data]);
+  useEffect(() => {
+    if (!robot || !form) return;
+    let settled = false;
+    setPreviewState("loading");
+    setPreviewError("");
+    const frame = previewFrame.current;
+    const probe = () =>
+      frame?.contentWindow?.postMessage(
+        { type: "zhixing:preview-probe" },
+        window.location.origin,
+      );
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== window.location.origin ||
+        event.source !== frame?.contentWindow ||
+        event.data?.type !== "zhixing:preview-status"
+      )
+        return;
+      settled = true;
+      if (event.data.status === "ready") {
+        setPreviewState("ready");
+        setPreviewError("");
+      } else if (event.data.status === "error") {
+        setPreviewState("error");
+        setPreviewError(
+          typeof event.data.message === "string"
+            ? event.data.message
+            : "客服初始化失败，请稍后重试。",
+        );
+      }
+    };
+    window.addEventListener("message", onMessage);
+    probe();
+    const probeTimer = window.setInterval(probe, 500);
+    const timer = window.setTimeout(() => {
+      if (!settled) {
+        setPreviewState("error");
+        setPreviewError("客服预览加载超时，请检查服务状态后重试。");
+      }
+    }, 15000);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.clearInterval(probeTimer);
+      window.clearTimeout(timer);
+    };
+  }, [robot, previewAttempt, !!form]);
   if (r.loading) return <Loading />;
   if (r.error) return <ErrorBox text={r.error} retry={r.reload} />;
   if (!form) return <Loading />;
@@ -386,9 +438,56 @@ export function Configuration({
             <section className="panel preview-panel">
               <div className="panel-heading">
                 <h2>客服预览</h2>
-                <Badge tone="blue">真实接口</Badge>
+                <Badge
+                  tone={
+                    previewState === "ready"
+                      ? "green"
+                      : previewState === "error"
+                        ? "amber"
+                        : "blue"
+                  }
+                >
+                  {previewState === "ready"
+                    ? "预览已就绪"
+                    : previewState === "error"
+                      ? "预览未就绪"
+                      : "正在连接"}
+                </Badge>
               </div>
-              <iframe title="智能客服预览" src="/chat?preview=1" />
+              <div className="preview-frame-wrap">
+                <iframe
+                  key={previewAttempt}
+                  ref={previewFrame}
+                  title="智能客服预览"
+                  src="/chat?preview=1"
+                />
+                {previewState !== "ready" && (
+                  <div
+                    className="preview-frame-state"
+                    role={previewState === "error" ? "alert" : "status"}
+                  >
+                    {previewState === "loading" ? (
+                      <>
+                        <Loading /> <span>正在连接客服服务…</span>
+                      </>
+                    ) : (
+                      <>
+                        <p>{previewError}</p>
+                        <button
+                          className="button secondary small"
+                          onClick={() => {
+                            setPreviewError("");
+                            setPreviewState("loading");
+                            setPreviewAttempt((value) => value + 1);
+                          }}
+                        >
+                          <ShieldCheck size={14} /> 重新加载预览
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </section>
           </>
         ) : (

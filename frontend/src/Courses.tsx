@@ -5,6 +5,7 @@ import { api } from "./api";
 import { useAccess } from "./auth";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
 import { exams, isoTime, localTime, Pager, usePaged } from "./lists";
+import { exampleBatchCopy } from "./displayCopy";
 
 const blankCourse = () => ({
   name: "",
@@ -231,7 +232,7 @@ export function Courses({ version }: { version: number }) {
         }
       />
       <section className="panel">
-        <div className="toolbar">
+        <div className="toolbar course-filters">
           <input
             aria-label="搜索课程"
             placeholder="搜索课程名称"
@@ -432,7 +433,9 @@ export function Courses({ version }: { version: number }) {
                     onClick={() => editBatch(b)}
                   >
                     <strong>
-                      {b.name} · {saleLabels[b.sale_status]}
+                      {exampleBatchCopy(b.name, edit.is_demo)}
+                      {edit.is_demo ? "（示例）" : ""} ·{" "}
+                      {saleLabels[b.sale_status]}
                     </strong>
                     <small>
                       {b.mode === "online"

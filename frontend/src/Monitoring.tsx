@@ -3,6 +3,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Activity, Bell, HardDrive, Server } from "lucide-react";
 import { api, date, useResource } from "./api";
 import { Badge, Empty, ErrorBox, Loading, PageTitle, useToast } from "./ui";
+import {
+  componentNameLabel,
+  componentStatusLabel,
+  summarizeComponent,
+} from "./monitoringCopy";
 
 const severityLabel: Record<string, string> = {
   info: "提示",
@@ -14,28 +19,6 @@ const statusLabel: Record<string, string> = {
   acked: "已确认",
   resolved: "已恢复",
 };
-const componentLabel: Record<string, string> = {
-  api: "API",
-  alert_monitor: "告警巡检",
-  database: "数据库",
-  redis: "Redis",
-  worker: "文档 Worker",
-  jobs: "任务队列",
-  model: "模型调用",
-  latency: "请求耗时",
-  disk: "磁盘",
-  backup: "完整数据库备份",
-  schema: "数据库版本",
-};
-const componentStatusLabel: Record<string, string> = {
-  ok: "正常",
-  warn: "提醒",
-  fail: "异常",
-  unknown: "未知",
-  skipped: "未启用",
-  degraded: "降级",
-};
-
 function StatusDot({ status }: { status: string }) {
   const tone =
     status === "ok" || status === "skipped"
@@ -52,7 +35,7 @@ export function Monitoring({ version }: { version: number }) {
     <>
       <PageTitle
         title="运行监控与告警"
-        description="巡检数据库、Redis、Worker、任务、模型、耗时、磁盘与备份；邮件通知默认关闭，配置并启用后自动发送。"
+        description="巡检接口服务、数据库、缓存、文档任务、模型调用、响应时间、磁盘和备份；邮件通知默认关闭，配置并启用后自动发送。"
       />
       <div className="quality-tabs" role="tablist" aria-label="运维监控">
         {[
@@ -130,7 +113,9 @@ function StatusPanel({ version }: { version: number }) {
                 ? "正常"
                 : data.status === "degraded"
                   ? "降级"
-                  : "异常"}
+                  : data.status === "fail"
+                    ? "异常"
+                    : "未知"}
             </strong>
             <span className="muted">
               未关闭告警 {data.open_alerts ?? "-"} · 检查于{" "}
@@ -165,7 +150,7 @@ function StatusPanel({ version }: { version: number }) {
                 <div className="metric-card-header">
                   <span className="metric-card-title">
                     <StatusDot status={c.status || "unknown"} />
-                    <strong>{componentLabel[key] || key}</strong>
+                    <strong>{componentNameLabel[key] || "其他组件"}</strong>
                   </span>
                   <Badge
                     tone={
@@ -176,7 +161,7 @@ function StatusPanel({ version }: { version: number }) {
                           : "amber"
                     }
                   >
-                    {componentStatusLabel[c.status] || c.status || "未知"}
+                    {componentStatusLabel[c.status] || "未知"}
                   </Badge>
                 </div>
                 {key === "schema" && !c.detail ? (
@@ -192,7 +177,7 @@ function StatusPanel({ version }: { version: number }) {
                   </dl>
                 ) : (
                   <p className="metric-card-detail">
-                    {summarizeComponent(key, c)}
+                    {summarizeComponent(key, c, (value) => date(value))}
                   </p>
                 )}
               </div>
@@ -206,20 +191,6 @@ function StatusPanel({ version }: { version: number }) {
       </p>
     </>
   );
-}
-
-function summarizeComponent(key: string, c: any) {
-  if (key === "jobs")
-    return `排队 ${c.queued ?? 0} · 处理中 ${c.running ?? 0} · 近1小时失败 ${c.failed_1h ?? 0}`;
-  if (key === "model")
-    return `近1小时调用 ${c.calls_1h ?? 0} · 错误 ${c.errors_1h ?? 0} · 超时 ${c.timeouts_1h ?? 0} · 错误率 ${c.error_rate ?? 0}`;
-  if (key === "latency")
-    return `样本 ${c.count ?? 0} · p50 ${c.p50_ms ?? "-"}ms · p95 ${c.p95_ms ?? "-"}ms · max ${c.max_ms ?? "-"}ms`;
-  if (key === "disk")
-    return `已用 ${c.used_pct ?? "-"}% · 剩余 ${c.free_gb ?? "-"} GB`;
-  if (key === "worker")
-    return c.detail || (c.updated_at ? `心跳 ${date(c.updated_at)}` : "无心跳");
-  return c.detail || c.latest_file || JSON.stringify(c).slice(0, 120);
 }
 
 function AlertsPanel({ version }: { version: number }) {
@@ -282,10 +253,10 @@ function AlertsPanel({ version }: { version: number }) {
                 <tr key={a.id}>
                   <td>
                     <Badge tone={a.severity === "critical" ? "amber" : "muted"}>
-                      {severityLabel[a.severity] || a.severity}
+                      {severityLabel[a.severity] || "其他"}
                     </Badge>
                     <div className="muted">
-                      {statusLabel[a.status] || a.status}
+                      {statusLabel[a.status] || "未知"}
                     </div>
                   </td>
                   <td>
@@ -315,7 +286,7 @@ function AlertsPanel({ version }: { version: number }) {
                         failed: "发送失败",
                         skipped: "未启用",
                       } as Record<string, string>
-                    )[a.notify_state] || a.notify_state}
+                    )[a.notify_state] || "发送状态未知"}
                     {a.notify_last_error && (
                       <div className="muted">{a.notify_last_error}</div>
                     )}
@@ -415,7 +386,7 @@ function NotifyPanel({ version }: { version: number }) {
           <p>{form.note}</p>
           <p>
             {form.monitor
-              ? `巡检进程最近记录：${date(form.monitor.last_seen_at, true)}；状态${form.monitor.status === "ok" ? "正常" : "异常，请检查服务"}；SMTP 参数${form.monitor.smtp_configured ? "已填写" : "未填写完整"}。${form.monitor.last_error ? ` 错误类型：${form.monitor.last_error}。` : ""}`
+              ? `巡检进程最近记录：${date(form.monitor.last_seen_at, true)}；状态${componentStatusLabel[form.monitor.status] || "未知"}${form.monitor.status === "fail" ? "，请检查服务" : ""}；SMTP 参数${form.monitor.smtp_configured ? "已填写" : "未填写完整"}。${form.monitor.last_error ? ` 错误类型：${form.monitor.last_error}。` : ""}`
               : "尚未收到巡检进程心跳，请检查 alert-monitor 服务。"}
           </p>
         </div>

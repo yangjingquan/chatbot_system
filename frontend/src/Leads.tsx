@@ -16,6 +16,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Filters, Pager, usePaged, localTime, isoTime } from "./lists";
 import { StudentAssociation } from "./Students";
 import { trialLabels } from "./Reception";
+import { followupCopy } from "./timeCopy";
+import { exampleBatchCopy } from "./displayCopy";
 import { useAccess } from "./auth";
 import {
   Badge,
@@ -493,7 +495,10 @@ export function Leads({
               detail.trials.map((t: any) => (
                 <article className="revision-row" key={t.id}>
                   <Link className="text-link" to={"/trials"}>
-                    {t.course_name} · {trialLabels[t.status] || t.status}
+                    {t.course_name} ·{" "}
+                    {exampleBatchCopy(t.batch_name, t.is_demo)}
+                    {t.is_demo ? "（示例）" : ""} ·{" "}
+                    {trialLabels[t.status] || t.status}
                   </Link>
                   <small>
                     意向 {date(t.requested_at, true)}
@@ -532,7 +537,7 @@ export function Leads({
                     <strong>{f.author}</strong>
                     <small>{date(f.created_at, true)}</small>
                   </div>
-                  <p>{f.content}</p>
+                  <p>{followupCopy(f.content)}</p>
                 </article>
               ))}
             </div>
